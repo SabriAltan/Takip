@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Talep · Onay · Sipariş · Stok Sistemi</title>
+<title>Talep · Onay · Sipariş · Stok · Cari & İade Sistemi</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
 
@@ -87,16 +87,6 @@
   .stat-label{ font-size:11px; text-transform:uppercase; letter-spacing:.03em; color:var(--text-mute); }
   .stat-value{ font-size:20px; font-weight:600; }
 
-  .pipeline{ display:flex; align-items:flex-start; width:100%; }
-  .pipe-step{ display:flex; flex-direction:column; align-items:center; gap:4px; flex:1; min-width:0; }
-  .pipe-dot{ width:10px; height:10px; border-radius:999px; border:2px solid var(--border-strong); background:transparent; }
-  .pipe-dot.done{ background:var(--amber); border-color:var(--amber-hover); }
-  .pipe-dot.rejected{ background:var(--red); border-color:#f27a75; }
-  .pipe-label{ font-size:9px; color:var(--text-mute); text-align:center; }
-  .pipe-label.done{ color:var(--text-dim); }
-  .pipe-line{ height:2px; flex:1; background:var(--border); margin-top:4px; }
-  .pipe-line.done{ background:var(--amber); }
-
   .table-responsive { width: 100%; overflow-x: auto; }
   table{ width:100%; border-collapse:collapse; font-size:13px; min-width: 600px; }
   thead tr{ background:var(--surface2); text-align:left; }
@@ -118,7 +108,6 @@
   .toast.amber{ background:rgba(232,163,61,.13); border-color:rgba(232,163,61,.4); color:#F0B65E; }
 
   .list-item{ padding:14px 16px; cursor:pointer; }
-  .list-item:hover{ border-color:var(--border-strong); }
   .filters-row{ display:flex; flex-wrap:wrap; gap:8px; margin-bottom:16px; align-items:center; }
   .search-wrap{ position:relative; flex-grow: 1; max-width: 300px; }
   .search-wrap .input{ padding-left:32px; }
@@ -129,7 +118,6 @@
 
   .login-wrap{ min-height:100vh; width:100%; display:flex; align-items:center; justify-content:center; padding:16px; }
   .login-box{ width:100%; max-width:360px; }
-  
   .flex-wrap-gap { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 
   @media (max-width:800px){
@@ -137,8 +125,6 @@
     .sidebar{ width:64px; }
     .sidebar-title,.sidebar-sub,.nav-item span:not(:first-child),.user-chip-name,.user-chip-role{ display:none; }
     main{ padding:16px; }
-    .pipeline-wrap-desktop { display: none; }
-    .flex-wrap-gap .input, .flex-wrap-gap .btn { flex: 1 1 100%; min-width: 100%; }
   }
 </style>
 </head>
@@ -177,15 +163,15 @@ function esc(s){
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 function statusTone(status){
-  if (status.includes("Reddedildi")) return "red";
+  if (status.includes("Reddedildi") || status.includes("İade")) return "red";
   return { "Beklemede":"blue","Onaylandı":"teal","Sipariş Verildi":"amber","Teslim Alındı":"green","Fatura Onaylandı":"slate" }[status] || "slate";
 }
 function badge(text, tone){ return `<span class="badge tone-${tone}">${esc(text)}</span>`; }
 
 function seedUsers(){
-  return [{ id:uid(), username:"admin", password:"admin123", fullName:"Sistem Yöneticisi", role:"admin", active:true, createdAt:nowISO() }];
+  return [{ id:uid(), username:"admin", password:"admin1234", fullName:"Sistem Yöneticisi", role:"admin", active:true, createdAt:nowISO() }];
 }
-function seedData(){ return { requests:[], stock:[], transactions:[], reqCounter:0 }; }
+function seedData(){ return { requests:[], stock:[], transactions:[], suppliers:[], reqCounter:0 }; }
 
 /* ============================ STATE ============================ */
 
@@ -193,12 +179,12 @@ let state = {
   users:null, data:null, session:null, loading:true, tab:"dashboard",
   modal:null,
   talepQuery:"", talepStatusFilter:"Tümü",
-  stokQuery:"",
+  stokQuery:"", cariQuery:"",
   loginError:"",
 };
 let _pendingFocus = null;
 
-/* ============================ STORAGE (CONCURRENCY UPGRADED) ============================ */
+/* ============================ STORAGE ============================ */
 
 async function loadAll(){
   try{
@@ -213,6 +199,8 @@ async function loadAll(){
     let d = null;
     try{ const r2 = await window.storage.get("workflow-data", true); d = r2 ? JSON.parse(r2.value) : null; }catch(e){ d = null; }
     if(!d){ d = seedData(); try{ await window.storage.set("workflow-data", JSON.stringify(d), true); }catch(e){} }
+    // Tedarikçi dizisi yoksa ekle (migrasyon)
+    if(!d.suppliers) d.suppliers = [];
     state.data = d;
   }catch(e){
     state.users = seedUsers();
@@ -222,18 +210,17 @@ async function loadAll(){
   render();
 }
 
-// Background auto-refresh for realtime feeling
 setInterval(() => {
   if (state.session && !state.modal && !document.activeElement.classList.contains('input')) {
     loadAll();
   }
 }, 5000);
 
-// Concurrency-safe mutator: Fetches latest before saving
 async function mutateData(mutationFn){
   try {
     const r2 = await window.storage.get("workflow-data", true); 
     let current = r2 ? JSON.parse(r2.value) : seedData();
+    if(!current.suppliers) current.suppliers = [];
     let next = mutationFn(current);
     await window.storage.set("workflow-data", JSON.stringify(next), true);
     state.data = next;
@@ -250,8 +237,6 @@ async function saveUsers(next){
   render();
 }
 
-/* ============================ TOAST ============================ */
-
 function showToast(msg, tone){
   tone = tone || "green";
   const c = document.getElementById("toast-container");
@@ -261,8 +246,6 @@ function showToast(msg, tone){
   c.appendChild(t);
   setTimeout(()=>{ t.style.opacity="0"; setTimeout(()=>t.remove(), 300); }, 3000);
 }
-
-/* ============================ RENDER ROOT ============================ */
 
 function render(){
   const app = document.getElementById("app");
@@ -291,44 +274,27 @@ function restoreFocus(){
   _pendingFocus = null;
 }
 
-/* ============================ LOGIN ============================ */
-
 function renderLoginScreen(loading){
   if(loading){
-    return `<div class="login-wrap"><div class="login-box">
-      <div class="login-head">
-        <div class="login-logo">📦</div>
-        <h1 class="font-display" style="font-size:17px;font-weight:600;">Talep · Onay · Stok Sistemi</h1>
-      </div>
-      <div class="card" style="padding:24px;text-align:center;color:var(--text-mute);font-size:13px;">Sistem yükleniyor…</div>
-    </div></div>`;
+    return `<div class="login-wrap"><div class="login-box"><div class="card" style="padding:24px;text-align:center;color:var(--text-mute);">Sistem yükleniyor…</div></div></div>`;
   }
   return `<div class="login-wrap"><div class="login-box">
-    <div class="login-head">
-      <div class="login-logo">📦</div>
-      <h1 class="font-display" style="font-size:17px;font-weight:600;">Talep · Onay · Stok Sistemi</h1>
-      <p style="font-size:12px;color:var(--text-mute);margin:4px 0 0;">Satın alma ve envanter süreç yönetimi</p>
+    <div style="margin-bottom:16px; text-align:center;">
+      <div style="font-size:32px;">📦</div>
+      <h1 class="font-display" style="font-size:17px;font-weight:600;">Talep & Envanter Sistemi</h1>
     </div>
     <div class="card" style="padding:20px;">
       <form id="login-form">
         <div style="margin-bottom:12px;">
           <span class="field-label">Kullanıcı adı <span class="req">*</span></span>
-          <div class="input-icon-wrap">
-            <span class="ic-left">👤</span>
-            <input class="input" id="login-username" name="username" placeholder="kullanici.adi" autocomplete="username" autofocus>
-          </div>
+          <input class="input" id="login-username" name="username" autocomplete="username" autofocus>
         </div>
         <div style="margin-bottom:12px;">
           <span class="field-label">Şifre <span class="req">*</span></span>
-          <div class="input-icon-wrap">
-            <span class="ic-left">🔒</span>
-            <input class="input" type="password" id="login-password" name="password" placeholder="••••••••" autocomplete="current-password">
-            <button type="button" class="ic-right" data-action="toggle-login-pw">👁</button>
-          </div>
+          <input class="input" type="password" id="login-password" name="password" autocomplete="current-password">
         </div>
-        <div id="login-error-box">${state.loginError ? `<div class="login-error">${esc(state.loginError)}</div>` : ""}</div>
+        <div id="login-error-box">${state.loginError ? `<div style="color:var(--red);font-size:12px;margin-bottom:8px;">${esc(state.loginError)}</div>` : ""}</div>
         <button type="submit" class="btn btn-primary btn-block">Giriş yap →</button>
-        <p style="font-size:11px;color:var(--text-mute);text-align:center;margin:12px 0 0;">İlk kurulum: admin / admin123</p>
       </form>
     </div>
   </div></div>`;
@@ -339,11 +305,11 @@ function handleLogin(){
   const pass = document.getElementById("login-password").value;
   const u = state.users.find(x => x.username.toLowerCase() === uname.toLowerCase());
   if(!u || u.password !== pass){
-    document.getElementById("login-error-box").innerHTML = `<div class="login-error">Kullanıcı adı veya şifre hatalı.</div>`;
+    document.getElementById("login-error-box").innerHTML = `<div style="color:var(--red);font-size:12px;margin-bottom:8px;">Kullanıcı adı veya şifre hatalı.</div>`;
     return;
   }
   if(!u.active){
-    document.getElementById("login-error-box").innerHTML = `<div class="login-error">Bu hesap devre dışı bırakılmış. Yöneticinize başvurun.</div>`;
+    document.getElementById("login-error-box").innerHTML = `<div style="color:var(--red);font-size:12px;margin-bottom:8px;">Bu hesap devre dışı bırakılmış.</div>`;
     return;
   }
   state.loginError = "";
@@ -352,7 +318,7 @@ function handleLogin(){
   render();
 }
 
-/* ============================ SHELL ============================ */
+/* ============================ SHELL & NAV ============================ */
 
 const NAV = [
   { key:"dashboard", label:"Panel", icon:"📊", roles:["admin","onaylayan","satinalma","depo","talep_eden"] },
@@ -360,9 +326,10 @@ const NAV = [
   { key:"talepler", label:"Talepler", icon:"📋", roles:["admin","onaylayan","satinalma","depo","talep_eden"] },
   { key:"onay", label:"Onay Bekleyenler", icon:"✅", roles:["admin","onaylayan"] },
   { key:"satinalma", label:"Satın Alma", icon:"🛒", roles:["admin","satinalma"] },
-  { key:"stok", label:"Stok", icon:"🏬", roles:["admin","depo","satinalma","onaylayan"] },
+  { key:"cariler", label:"Cari Firmalar", icon:"🏢", roles:["admin","satinalma"] },
+  { key:"stok", label:"Stok & İade", icon:"🏬", roles:["admin","depo","satinalma","onaylayan"] },
   { key:"muhasebe", label:"Muhasebe", icon:"📈", roles:["admin"] },
-  { key:"kullanicilar", label:"Kullanıcılar", icon:"👥", roles:["admin"] },
+  { key:"ayarlar", label:"Sistem & Temizlik", icon:"⚙️", roles:["admin"] },
 ];
 
 function renderShell(){
@@ -376,17 +343,18 @@ function renderShell(){
   else if(state.tab === "talepler") content = renderTalepler();
   else if(state.tab === "onay") content = renderOnay();
   else if(state.tab === "satinalma") content = renderSatinAlma();
+  else if(state.tab === "cariler") content = renderCariler();
   else if(state.tab === "stok") content = renderStok();
   else if(state.tab === "muhasebe") content = renderMuhasebe();
-  else if(state.tab === "kullanicilar") content = renderKullanicilar();
+  else if(state.tab === "ayarlar") content = renderAyarlar();
 
   return `
     <aside class="sidebar">
       <div class="sidebar-head">
         <div class="logo-box">📦</div>
         <div>
-          <div class="sidebar-title font-display">Stok & Satın Alma</div>
-          <div class="sidebar-sub">Süreç Yönetim Sistemi</div>
+          <div class="sidebar-title font-display">Talep & Stok</div>
+          <div class="sidebar-sub">Profesyonel Modül</div>
         </div>
       </div>
       <nav class="nav">
@@ -415,71 +383,42 @@ function renderShell(){
 /* ============================ DASHBOARD ============================ */
 
 function renderDashboard(){
-  const { requests, stock, transactions } = state.data;
+  const { requests, stock, transactions, suppliers } = state.data;
   const pending = requests.filter(r=>r.status==="Beklemede").length;
   const approved = requests.filter(r=>r.status==="Onaylandı").length;
   const ordered = requests.filter(r=>r.status==="Sipariş Verildi").length;
   const delivered = requests.filter(r=>r.status==="Teslim Alındı" || r.status==="Fatura Onaylandı").length;
   const totalSpend = transactions.reduce((s,t)=>s+(Number(t.total)||0),0);
   const lowStock = stock.filter(s=>Number(s.qty)<=Number(s.minLevel));
-  const recent = [...requests].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)).slice(0,6);
 
   return `
-    <h1 class="page-title font-display">Merhaba, ${esc(state.session.fullName.split(" ")[0])}</h1>
-    <p class="page-sub">Talep, onay, sipariş ve stok akışının genel durumu.</p>
+    <h1 class="page-title font-display">Hoş Geldiniz, ${esc(state.session.fullName.split(" ")[0])}</h1>
+    <p class="page-sub">Sistem durumu ve istatistikler.</p>
 
     <div class="stat-grid">
-      ${statCard("⏱","Onay Bekleyen",pending,"blue")}
-      ${statCard("✅","Onaylandı",approved,"teal")}
-      ${statCard("🚚","Siparişte",ordered,"amber")}
-      ${statCard("📦","Teslim Alındı",delivered,"slate")}
+      <div class="card stat-card"><div class="stat-icon" style="background:rgba(76,141,255,.1);">⏱</div><div><div class="stat-label">Onay Bekleyen</div><div class="stat-value mono">${pending}</div></div></div>
+      <div class="card stat-card"><div class="stat-icon" style="background:rgba(45,212,166,.1);">✅</div><div><div class="stat-label">Onaylandı</div><div class="stat-value mono">${approved}</div></div></div>
+      <div class="card stat-card"><div class="stat-icon" style="background:rgba(232,163,61,.1);">🚚</div><div><div class="stat-label">Siparişte</div><div class="stat-value mono">${ordered}</div></div></div>
+      <div class="card stat-card"><div class="stat-icon" style="background:rgba(148,163,179,.1);">📦</div><div><div class="stat-label">Teslim Alındı</div><div class="stat-value mono">${delivered}</div></div></div>
     </div>
 
     <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(300px, 1fr));gap:16px;">
       <div class="card" style="padding:16px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-          <h2 style="font-size:13px;font-weight:600;">Son Talepler</h2>
-          <button class="nav-item" style="width:auto;padding:2px 0;color:var(--amber);font-size:12px;" data-action="nav" data-tab="talepler">Tümünü gör →</button>
-        </div>
-        ${recent.length===0 ? `<p class="empty">Henüz talep oluşturulmadı.</p>` : recent.map(r=>`
-          <div style="display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-top:1px solid #1D2430;">
-            <div style="min-width:0;">
-              <p style="font-size:13px;color:var(--text);margin:0;">${esc(r.item)} <span class="mono" style="color:var(--text-mute);font-size:11px;">×${esc(r.qty)} ${esc(r.unit)}</span></p>
-              <p style="font-size:11px;color:var(--text-mute);margin:2px 0 0;">${esc(r.no)} · ${esc(r.requesterName)}</p>
-            </div>
-            ${badge(r.status, statusTone(r.status))}
-          </div>
-        `).join("")}
-      </div>
-
-      <div class="card" style="padding:16px;">
-        <div style="display:flex;align-items:center;gap:6px;margin-bottom:12px;">
-          <span>⚠️</span><h2 style="font-size:13px;font-weight:600;">Kritik Stok Seviyesi</h2>
-        </div>
+        <h2 style="font-size:13px;font-weight:600;margin-bottom:12px;">Kritik Stok Seviyesi (${lowStock.length})</h2>
         ${lowStock.length===0 ? `<p class="empty">Kritik seviyede ürün yok.</p>` : lowStock.slice(0,6).map(s=>`
           <div style="display:flex;justify-content:space-between;font-size:13px;padding:6px 0;border-top:1px solid #1D2430;">
             <span>${esc(s.item)}</span>
             <span class="mono" style="color:#FCA5A1;">${esc(s.qty)}/${esc(s.minLevel)} ${esc(s.unit)}</span>
           </div>
         `).join("")}
-        ${state.session.role==="admin" ? `
-          <div style="margin-top:10px;padding-top:10px;border-top:1px solid #1D2430;display:flex;justify-content:space-between;">
-            <span style="font-size:12px;color:var(--text-mute);">Toplam Satın Alma Gideri</span>
-            <span class="mono" style="font-size:13px;font-weight:600;">${fmtTL(totalSpend)}</span>
-          </div>` : ""}
+      </div>
+      <div class="card" style="padding:16px;">
+        <h2 style="font-size:13px;font-weight:600;margin-bottom:12px;">Kayıtlı Cari Firma Sayısı</h2>
+        <div class="mono" style="font-size:24px; font-weight:700; color:var(--amber); margin-bottom:8px;">${suppliers.length} Firma</div>
+        <p style="font-size:12px; color:var(--text-mute);">Satın alma ve sipariş süreçlerinde tedarikçi carileri otomatik seçilebilir.</p>
       </div>
     </div>
   `;
-}
-
-function statCard(icon,label,value,tone){
-  return `<div class="card stat-card">
-    <div class="stat-icon" style="background:rgba(76,141,255,.1);">${icon}</div>
-    <div style="min-width:0;">
-      <div class="stat-label">${esc(label)}</div>
-      <div class="stat-value mono">${esc(value)}</div>
-    </div>
-  </div>`;
 }
 
 /* ============================ YENİ TALEP ============================ */
@@ -488,7 +427,7 @@ function renderYeniTalep(){
   return `
     <div style="max-width:520px;">
       <h1 class="page-title font-display">Yeni Talep</h1>
-      <p class="page-sub">Onay sürecine girecek yeni bir satın alma / stok talebi oluşturun.</p>
+      <p class="page-sub">Onay sürecine girecek yeni bir satın alma talebi oluşturun.</p>
       <div class="card" style="padding:20px;">
         <form id="new-talep-form">
           <div style="margin-bottom:14px;">
@@ -502,9 +441,7 @@ function renderYeniTalep(){
             </div>
             <div>
               <span class="field-label">Öncelik</span>
-              <select class="input" id="talep-priority">
-                <option>Düşük</option><option selected>Normal</option><option>Yüksek</option><option>Acil</option>
-              </select>
+              <select class="input" id="talep-priority"><option>Düşük</option><option selected>Normal</option><option>Yüksek</option><option>Acil</option></select>
             </div>
           </div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;">
@@ -519,7 +456,7 @@ function renderYeniTalep(){
           </div>
           <div style="margin-bottom:16px;">
             <span class="field-label">Açıklama / Gerekçe</span>
-            <textarea rows="3" class="input" id="talep-note" placeholder="Talebin nedenini kısaca açıklayın (opsiyonel)"></textarea>
+            <textarea rows="3" class="input" id="talep-note" placeholder="Açıklama (opsiyonel)"></textarea>
           </div>
           <button type="submit" class="btn btn-primary">➕ Talebi gönder</button>
         </form>
@@ -531,7 +468,7 @@ function renderYeniTalep(){
 function handleNewTalep(){
   const item = document.getElementById("talep-item").value.trim();
   const qty = document.getElementById("talep-qty").value;
-  if(!item || !qty || Number(qty)<=0){ showToast("Ürün adı ve geçerli bir miktar girin.","red"); return; }
+  if(!item || !qty || Number(qty)<=0){ showToast("Ürün adı ve geçerli miktar girin.","red"); return; }
   
   mutateData(currentData => {
     const counter = (currentData.reqCounter||0)+1;
@@ -550,7 +487,7 @@ function handleNewTalep(){
   });
 }
 
-/* ============================ TALEPLER ============================ */
+/* ============================ TALEPLER & DETAY ============================ */
 
 function renderTalepler(){
   const mine = state.session.role === "talep_eden";
@@ -559,22 +496,18 @@ function renderTalepler(){
   if(state.talepStatusFilter !== "Tümü") list = list.filter(r=>r.status===state.talepStatusFilter);
   if(state.talepQuery.trim()){
     const q = state.talepQuery.toLowerCase();
-    list = list.filter(r=>r.item.toLowerCase().includes(q)||r.no.toLowerCase().includes(q)||r.requesterName.toLowerCase().includes(q));
+    list = list.filter(r=>r.item.toLowerCase().includes(q)||r.no.toLowerCase().includes(q));
   }
   list = [...list].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
-  const statuses = ["Tümü","Beklemede","Onaylandı","Reddedildi","Sipariş Verildi","Teslim Alındı","Fatura Onaylandı","Fatura Reddedildi"];
 
   return `
     <h1 class="page-title font-display">${mine?"Taleplerim":"Tüm Talepler"}</h1>
     <p class="page-sub">Toplam ${list.length} kayıt</p>
 
     <div class="filters-row">
-      <div class="search-wrap">
-        <span class="ic">🔍</span>
-        <input class="input" id="talep-search" placeholder="Ara: ürün, no, talep eden…" value="${esc(state.talepQuery)}">
-      </div>
+      <div class="search-wrap"><span class="ic">🔍</span><input class="input" id="talep-search" placeholder="Ara…" value="${esc(state.talepQuery)}"></div>
       <select class="input" style="width:auto;" id="talep-status-filter">
-        ${statuses.map(s=>`<option ${s===state.talepStatusFilter?'selected':''}>${esc(s)}</option>`).join("")}
+        ${["Tümü","Beklemede","Onaylandı","Reddedildi","Sipariş Verildi","Teslim Alındı","İade Edildi","Fatura Onaylandı"].map(s=>`<option ${s===state.talepStatusFilter?'selected':''}>${esc(s)}</option>`).join("")}
       </select>
     </div>
 
@@ -585,36 +518,14 @@ function renderTalepler(){
             <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:4px;">
               <span class="mono" style="font-size:11px;color:var(--amber);">${esc(r.no)}</span>
               ${badge(r.status, statusTone(r.status))}
-              ${r.priority==="Acil" ? badge("Acil","red") : ""}
             </div>
-            <p style="font-size:13px;font-weight:500;margin:0;">${esc(r.item)} <span class="mono" style="color:var(--text-mute);font-size:11px;font-weight:400;">× ${esc(r.qty)} ${esc(r.unit)}</span></p>
+            <p style="font-size:13px;font-weight:500;margin:0;">${esc(r.item)} <span class="mono" style="color:var(--text-mute);font-size:11px;">× ${esc(r.qty)} ${esc(r.unit)}</span></p>
             <p style="font-size:11px;color:var(--text-mute);margin:3px 0 0;">${esc(r.category)} · ${esc(r.requesterName)} · ${fmtDate(r.createdAt)}</p>
           </div>
-          <div style="width:190px;flex-shrink:0;" class="pipeline-wrap-desktop">${renderPipeline(r.status)}</div>
         </div>
       </div>
     `).join("")}
   `;
-}
-
-function renderPipeline(status){
-  const rejected = status.includes("Reddedildi");
-  // Fatura onaylandı state represents completed pipeline visually
-  const visualStatus = status === "Fatura Onaylandı" || status === "Fatura Reddedildi" ? "Teslim Alındı" : status;
-  const activeIdx = rejected && status === "Reddedildi" ? 0 : STAGES.indexOf(visualStatus);
-  
-  let html = `<div class="pipeline">`;
-  STAGES.forEach((s,i)=>{
-    const done = !rejected && i<=activeIdx;
-    const isRejStop = rejected && status === "Reddedildi" && i===0;
-    html += `<div class="pipe-step">
-      <div class="pipe-dot ${isRejStop?'rejected':(done?'done':'')}"></div>
-      <div class="pipe-label ${done||isRejStop?'done':''}">${i===0&&isRejStop?'Reddedildi':esc(s)}</div>
-    </div>`;
-    if(i<STAGES.length-1) html += `<div class="pipe-line ${!rejected && i<activeIdx?'done':''}" style="margin-top:4px;"></div>`;
-  });
-  html += `</div>`;
-  return html;
 }
 
 function renderRequestModalContent(r){
@@ -628,48 +539,30 @@ function renderRequestModalContent(r){
       <button class="btn-icon" data-action="close-modal">✕</button>
     </div>
     ${badge(r.status, statusTone(r.status))}
-    <div style="margin:14px 0;">${renderPipeline(r.status)}</div>
-    ${row("Miktar", `${r.qty} ${r.unit}`)}
-    ${row("Kategori", r.category)}
-    ${row("Öncelik", r.priority)}
-    ${row("Talep eden", r.requesterName)}
-    ${row("Talep tarihi", fmtDate(r.createdAt))}
-    ${row("Açıklama", r.note)}
-    ${row("Onaylayan", r.approverName)}
-    ${row("Onay tarihi", r.approvedAt ? fmtDate(r.approvedAt) : "")}
-    ${row("Tedarikçi", r.supplier)}
-    ${row("Kargo Firması", r.cargoInfo)}
-    ${row("Kargo Ödemesi", r.cargoPayer)}
-    ${row("Teklif Fiyatı", r.unitPrice ? fmtTL(r.unitPrice) : "")}
-    ${row("Sipariş tarihi", r.orderDate ? fmtDate(r.orderDate) : "")}
-    ${row("İrsaliye No", r.irsaliyeNo)}
-    ${row("Teslim tarihi", r.deliveryDate ? fmtDate(r.deliveryDate) : "")}
-    ${row("Fatura No", r.invoiceNo)}
-    ${row("Gerçekleşen Fiyat", r.actualUnitPrice ? fmtTL(r.actualUnitPrice) : "")}
-    ${row("Muhasebe Durumu", r.invoiceStatus)}
+    <div style="margin-top:14px;">
+      ${row("Miktar", `${r.qty} ${r.unit}`)}
+      ${row("Kategori", r.category)}
+      ${row("Talep Eden", r.requesterName)}
+      ${row("Tedarikçi", r.supplier)}
+      ${row("Birim Fiyat", r.unitPrice ? fmtTL(r.unitPrice) : "")}
+      ${row("İrsaliye No", r.irsaliyeNo)}
+      ${row("İade Nedeni", r.returnReason)}
+    </div>
   `;
 }
 
 /* ============================ ONAY ============================ */
 
 function renderOnay(){
-  const pending = state.data.requests.filter(r=>r.status==="Beklemede").sort((a,b)=>new Date(a.createdAt)-new Date(b.createdAt));
+  const pending = state.data.requests.filter(r=>r.status==="Beklemede");
   return `
     <h1 class="page-title font-display">Onay Bekleyenler</h1>
     <p class="page-sub">${pending.length} talep onayınızı bekliyor.</p>
-    ${pending.length===0 ? `<div class="card empty">Bekleyen talep yok — her şey güncel.</div>` : pending.map(r=>`
+    ${pending.length===0 ? `<div class="card empty">Bekleyen talep yok.</div>` : pending.map(r=>`
       <div class="card" style="padding:16px;margin-bottom:10px;">
-        <div style="margin-bottom:10px;">
-          <div style="display:flex;gap:6px;align-items:center;margin-bottom:4px;">
-            <span class="mono" style="font-size:11px;color:var(--amber);">${esc(r.no)}</span>
-            ${r.priority==="Acil" ? badge("Acil","red") : ""}
-          </div>
-          <p style="font-size:13px;font-weight:500;margin:0;">${esc(r.item)} <span class="mono" style="color:var(--text-mute);font-size:11px;font-weight:400;">× ${esc(r.qty)} ${esc(r.unit)}</span></p>
-          <p style="font-size:11px;color:var(--text-mute);margin:3px 0 0;">${esc(r.category)} · ${esc(r.requesterName)} · ${fmtDate(r.createdAt)}</p>
-          ${r.note ? `<p style="font-size:12px;color:var(--text-dim);margin-top:6px;background:var(--surface2);border-radius:8px;padding:6px 10px;">${esc(r.note)}</p>` : ""}
-        </div>
+        <p style="font-size:13px;font-weight:500;margin:0 0 4px;"><span class="mono" style="color:var(--amber);font-size:11px;margin-right:6px;">${esc(r.no)}</span>${esc(r.item)} × ${esc(r.qty)} ${esc(r.unit)}</p>
+        <p style="font-size:11px;color:var(--text-mute);margin:0 0 10px;">Talep Eden: ${esc(r.requesterName)}</p>
         <div class="flex-wrap-gap">
-          <input class="input" style="flex:1;min-width:160px;" id="onay-note-${r.id}" placeholder="Onay/red notu (opsiyonel)">
           <button class="btn btn-primary" data-action="onay-approve" data-id="${r.id}">✅ Onayla</button>
           <button class="btn btn-danger" data-action="onay-reject" data-id="${r.id}">✕ Reddet</button>
         </div>
@@ -679,161 +572,214 @@ function renderOnay(){
 }
 
 function handleOnayDecide(id, decision){
-  const noteEl = document.getElementById("onay-note-"+id);
-  const note = noteEl ? noteEl.value.trim() : "";
-  
-  mutateData(currentData => {
-    return {
-      ...currentData,
-      requests: currentData.requests.map(r => r.id===id ? {
-        ...r,
-        status: decision==="approve" ? "Onaylandı" : "Reddedildi",
-        approver: state.session.id, approverName: state.session.fullName,
-        approvedAt: nowISO(), approveNote: note,
-      } : r),
-    };
-  });
+  mutateData(currentData => ({
+    ...currentData,
+    requests: currentData.requests.map(r => r.id===id ? { ...r, status: decision==="approve" ? "Onaylandı" : "Reddedildi", approverName: state.session.fullName } : r)
+  }));
   showToast(decision==="approve" ? "Talep onaylandı." : "Talep reddedildi.", decision==="approve"?"green":"red");
 }
 
-/* ============================ SATIN ALMA ============================ */
+/* ============================ CARİ / TEDARİKÇİ YÖNETİMİ ============================ */
 
-function renderSatinAlma(){
-  const toOrder = state.data.requests.filter(r=>r.status==="Onaylandı");
-  const inTransit = state.data.requests.filter(r=>r.status==="Sipariş Verildi");
+function renderCariler(){
+  const suppliers = state.data.suppliers || [];
   return `
-    <h1 class="page-title font-display">Satın Alma</h1>
-    <p class="page-sub">Onaylanan talepleri siparişe dönüştürün ve nakliye detaylarını belirleyin.</p>
-
-    <h2 style="font-size:13px;font-weight:600;margin:20px 0 10px;">🛒 Siparişe Çevrilecek (${toOrder.length})</h2>
-    ${toOrder.length===0 ? `<div class="card empty">Onaylanmış, sipariş bekleyen talep yok.</div>` : toOrder.map(r=>`
-      <div class="card" style="padding:16px;margin-bottom:10px;">
-        <p style="font-size:13px;font-weight:500;margin:0 0 8px;"><span class="mono" style="color:var(--amber);font-size:11px;margin-right:6px;">${esc(r.no)}</span>${esc(r.item)} <span class="mono" style="color:var(--text-mute);font-size:11px;font-weight:400;">× ${esc(r.qty)} ${esc(r.unit)}</span></p>
-        <div class="flex-wrap-gap">
-          <input class="input" style="flex:1; min-width:120px;" id="order-supplier-${r.id}" placeholder="Tedarikçi adı">
-          <input type="number" min="0" step="any" class="input" style="width:110px;" id="order-price-${r.id}" placeholder="Teklif/Br Fiyat (₺)">
-          <input class="input" style="width:130px;" id="order-cargo-${r.id}" placeholder="Kargo Firması">
-          <select class="input" style="width:130px;" id="order-cargopayer-${r.id}">
-             <option value="Gönderici Öder">Gönderici Öder</option>
-             <option value="Alıcı Öder">Alıcı Öder</option>
-          </select>
-          <button class="btn btn-primary" data-action="order-place" data-id="${r.id}">🚚 Sipariş ver</button>
-        </div>
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:16px;">
+      <div>
+        <h1 class="page-title font-display">Cari / Tedarikçi Firmalar</h1>
+        <p class="page-sub">Satın alma süreçlerinde kullanılacak firma kartları</p>
       </div>
-    `).join("")}
-
-    <h2 style="font-size:13px;font-weight:600;margin:24px 0 10px;">📦 Yolda / Teslim Bekleyen (${inTransit.length})</h2>
-    ${inTransit.length===0 ? `<div class="card empty">Teslim bekleyen sipariş yok.</div>` : inTransit.map(r=>`
-      <div class="card" style="padding:16px;margin-bottom:10px;">
-        <p style="font-size:13px;font-weight:500;margin:0 0 4px;"><span class="mono" style="color:var(--amber);font-size:11px;margin-right:6px;">${esc(r.no)}</span>${esc(r.item)} <span class="mono" style="color:var(--text-mute);font-size:11px;font-weight:400;">× ${esc(r.qty)} ${esc(r.unit)}</span></p>
-        <p style="font-size:11px;color:var(--text-mute);margin:0 0 8px;">${esc(r.supplier)} · ${fmtTL(r.unitPrice)}/birim · Kargo: ${esc(r.cargoInfo)} (${esc(r.cargoPayer)})</p>
-      </div>
-    `).join("")}
-  `;
-}
-
-function handlePlaceOrder(id){
-  const supplier = document.getElementById("order-supplier-"+id).value.trim();
-  const price = document.getElementById("order-price-"+id).value;
-  const cargoInfo = document.getElementById("order-cargo-"+id).value.trim();
-  const cargoPayer = document.getElementById("order-cargopayer-"+id).value;
-  
-  if(!supplier || !price || Number(price)<=0){ showToast("Tedarikçi ve geçerli bir birim fiyat girin.","red"); return; }
-  
-  mutateData(currentData => {
-    return {
-      ...currentData,
-      requests: currentData.requests.map(x=>x.id===id ? {
-        ...x, status:"Sipariş Verildi", supplier, unitPrice:Number(price), cargoInfo, cargoPayer, orderDate:nowISO(), orderedBy:state.session.fullName,
-      } : x),
-    };
-  });
-  showToast(`Sipariş oluşturuldu.`);
-}
-
-/* ============================ STOK / TESLİM ALMA ============================ */
-
-function renderStok(){
-  const canEdit = ["admin","depo"].includes(state.session.role);
-  let list = [...state.data.stock].sort((a,b)=>a.item.localeCompare(b.item,"tr"));
-  if(state.stokQuery.trim()) list = list.filter(s=>s.item.toLowerCase().includes(state.stokQuery.toLowerCase()));
-
-  const inTransit = state.data.requests.filter(r=>r.status==="Sipariş Verildi");
-
-  return `
-    <h1 class="page-title font-display">Stok & Depo Yönetimi</h1>
-    <p class="page-sub">Gelen siparişleri irsaliye ile teslim alın. Stok kartları otomatik güncellenecektir.</p>
-
-    ${canEdit ? `
-    <h2 style="font-size:13px;font-weight:600;margin:20px 0 10px;">📦 Teslim Alınacak Siparişler (${inTransit.length})</h2>
-    ${inTransit.length===0 ? `<div class="card empty" style="margin-bottom:24px;">Teslim bekleyen sipariş yok.</div>` : inTransit.map(r=>`
-      <div class="card" style="padding:16px;margin-bottom:10px;">
-        <p style="font-size:13px;font-weight:500;margin:0 0 4px;"><span class="mono" style="color:var(--amber);font-size:11px;margin-right:6px;">${esc(r.no)}</span>${esc(r.item)} <span class="mono" style="color:var(--text-mute);font-size:11px;font-weight:400;">× ${esc(r.qty)} ${esc(r.unit)}</span></p>
-        <p style="font-size:11px;color:var(--text-mute);margin:0 0 8px;">${esc(r.supplier)} · Kargo: ${esc(r.cargoInfo)}</p>
-        <div class="flex-wrap-gap">
-          <input class="input" style="width:200px;" id="deliver-irsaliye-${r.id}" placeholder="İrsaliye no girin (Zorunlu)">
-          <button class="btn btn-primary" data-action="order-receive" data-id="${r.id}">✅ Teslim alındı olarak işle</button>
-        </div>
-      </div>
-    `).join("")}
-    ` : ""}
-
-    <h2 style="font-size:13px;font-weight:600;margin:24px 0 10px;">Envanter Durumu</h2>
-    <div class="search-wrap" style="width:100%; max-width: 300px; margin-bottom:16px;">
-      <span class="ic">🔍</span>
-      <input class="input" id="stok-search" placeholder="Ürün ara…" value="${esc(state.stokQuery)}">
+      <button class="btn btn-primary" data-action="cari-new">➕ Yeni Firma Ekle</button>
     </div>
-    ${list.length===0 ? `<div class="card empty">Stokta ürün bulunmuyor.</div>` : `
+
+    ${suppliers.length===0 ? `<div class="card empty">Kayıtlı cari firma bulunmuyor. Yeni firma ekleyin.</div>` : `
     <div class="card table-responsive">
       <table>
-        <thead><tr>
-          <th>Ürün</th><th>Kategori</th><th style="text-align:right;">Mevcut</th><th style="text-align:right;">Kritik Seviye</th><th>Durum</th>
-          ${canEdit?'<th style="text-align:right;">İşlem</th>':''}
-        </tr></thead>
+        <thead><tr><th>Firma Ünvanı</th><th>Yetkili / İletişim</th><th>Vergi Dairesi / No</th><th>Telefon</th><th style="text-align:right;">İşlem</th></tr></thead>
         <tbody>
-          ${list.map(s=>{
-            const low = Number(s.qty)<=Number(s.minLevel);
-            return `<tr>
-              <td>${esc(s.item)}</td>
-              <td style="color:var(--text-mute);font-size:12px;">${esc(s.category||"—")}</td>
-              <td style="text-align:right;" class="mono">${esc(s.qty)} <span style="color:var(--text-mute);font-size:11px;">${esc(s.unit)}</span></td>
-              <td style="text-align:right;">
-                ${canEdit ? `<input class="input mono" style="width:76px;text-align:right;display:inline-block;padding:5px 8px;" id="min-${s.id}" value="${esc(s.minLevel)}" data-action="min-input" data-id="${s.id}">`
-                          : `<span class="mono" style="color:var(--text-dim);">${esc(s.minLevel)}</span>`}
-              </td>
-              <td>${low ? badge("Kritik","red") : badge("Yeterli","green")}</td>
-              ${canEdit ? `<td style="text-align:right;">
-                <button class="btn-icon green" title="Stok girişi" data-action="stock-adjust-open" data-id="${s.id}" data-dir="in">↑</button>
-                <button class="btn-icon danger" title="Stok çıkışı" data-action="stock-adjust-open" data-id="${s.id}" data-dir="out">↓</button>
-              </td>` : ''}
-            </tr>`;
-          }).join("")}
+          ${suppliers.map(c=>`<tr>
+            <td><strong>${esc(c.name)}</strong></td>
+            <td>${esc(c.contact||"—")}</td>
+            <td class="mono" style="font-size:12px;">${esc(c.taxNo||"—")}</td>
+            <td class="mono" style="font-size:12px;">${esc(c.phone||"—")}</td>
+            <td style="text-align:right;">
+              <button class="btn-icon danger" data-action="cari-delete" data-id="${c.id}">🗑</button>
+            </td>
+          </tr>`).join("")}
         </tbody>
       </table>
     </div>`}
   `;
 }
 
+/* ============================ SATIN ALMA ============================ */
+
+function renderSatinAlma(){
+  const toOrder = state.data.requests.filter(r=>r.status==="Onaylandı");
+  const suppliers = state.data.suppliers || [];
+
+  return `
+    <h1 class="page-title font-display">Satın Alma</h1>
+    <p class="page-sub">Onaylanan talepleri cari firmalara sipariş olarak atayın.</p>
+
+    ${toOrder.length===0 ? `<div class="card empty">Sipariş bekleyen onaylı talep yok.</div>` : toOrder.map(r=>`
+      <div class="card" style="padding:16px;margin-bottom:10px;">
+        <p style="font-size:13px;font-weight:500;margin:0 0 8px;"><span class="mono" style="color:var(--amber);font-size:11px;margin-right:6px;">${esc(r.no)}</span>${esc(r.item)} × ${esc(r.qty)} ${esc(r.unit)}</p>
+        <div class="flex-wrap-gap">
+          <select class="input" style="flex:1;min-width:160px;" id="order-supplier-${r.id}">
+            <option value="">-- Cari Firma Seçin --</option>
+            ${suppliers.map(s=>`<option value="${esc(s.name)}">${esc(s.name)}</option>`).join("")}
+          </select>
+          <input type="number" min="0" step="any" class="input" style="width:120px;" id="order-price-${r.id}" placeholder="Birim Fiyat (₺)">
+          <button class="btn btn-primary" data-action="order-place" data-id="${r.id}">🚚 Sipariş Ver</button>
+        </div>
+      </div>
+    `).join("")}
+  `;
+}
+
+function handlePlaceOrder(id){
+  const supSelect = document.getElementById("order-supplier-"+id);
+  const supplier = supSelect ? supSelect.value : "";
+  const price = document.getElementById("order-price-"+id).value;
+  
+  if(!supplier || !price || Number(price)<=0){ showToast("Cari firma seçin ve geçerli bir fiyat girin.","red"); return; }
+  
+  mutateData(currentData => ({
+    ...currentData,
+    requests: currentData.requests.map(x=>x.id===id ? { ...x, status:"Sipariş Verildi", supplier, unitPrice:Number(price) } : x)
+  }));
+  showToast("Sipariş başarıyla oluşturuldu.");
+}
+
+/* ============================ STOK & İADE SÜREÇLERİ ============================ */
+
+function renderStok(){
+  const canEdit = ["admin","depo"].includes(state.session.role);
+  let list = [...state.data.stock].sort((a,b)=>a.item.localeCompare(b.item,"tr"));
+  const inTransit = state.data.requests.filter(r=>r.status==="Sipariş Verildi");
+
+  return `
+    <h1 class="page-title font-display">Stok & İade Yönetimi</h1>
+    <p class="page-sub">Gelen siparişleri irsaliye ile teslim alın ya da hatalı/kusurlu ürünleri iade edin.</p>
+
+    ${canEdit ? `
+    <h2 style="font-size:13px;font-weight:600;margin:20px 0 10px;">📦 Teslim Alınacak / Kontrol Edilecek Siparişler (${inTransit.length})</h2>
+    ${inTransit.length===0 ? `<div class="card empty" style="margin-bottom:24px;">Teslim bekleyen sipariş yok.</div>` : inTransit.map(r=>`
+      <div class="card" style="padding:16px;margin-bottom:10px;">
+        <p style="font-size:13px;font-weight:500;margin:0 0 4px;"><span class="mono" style="color:var(--amber);font-size:11px;margin-right:6px;">${esc(r.no)}</span>${esc(r.item)} × ${esc(r.qty)} ${esc(r.unit)}</p>
+        <p style="font-size:11px;color:var(--text-mute);margin:0 0 8px;">Tedarikçi Cari: ${esc(r.supplier)}</p>
+        <div class="flex-wrap-gap">
+          <input class="input" style="width:160px;" id="deliver-irs-${r.id}" placeholder="İrsaliye No">
+          <input class="input" style="flex:1;min-width:140px;" id="return-reason-${r.id}" placeholder="İade nedeni (Eğer iade edilecekse)">
+          <button class="btn btn-primary" data-action="order-receive" data-id="${r.id}">✅ Teslim Al</button>
+          <button class="btn btn-danger" data-action="order-return" data-id="${r.id}">↩ İade Et / Reddet</button>
+        </div>
+      </div>
+    `).join("")}
+    ` : ""}
+
+    <h2 style="font-size:13px;font-weight:600;margin:24px 0 10px;">Mevcut Envanter</h2>
+    <div class="card table-responsive">
+      <table>
+        <thead><tr><th>Ürün</th><th>Kategori</th><th style="text-align:right;">Miktar</th><th>Durum</th></tr></thead>
+        <tbody>
+          ${list.length===0 ? `<tr><td colspan="4" class="empty">Stokta ürün bulunmuyor.</td></tr>` : list.map(s=>`
+            <tr>
+              <td>${esc(s.item)}</td>
+              <td style="color:var(--text-mute);">${esc(s.category)}</td>
+              <td style="text-align:right;" class="mono">${esc(s.qty)} ${esc(s.unit)}</td>
+              <td>${badge("Yeterli","green")}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
 function handleReceiveOrder(id){
-  const irsaliyeEl = document.getElementById("deliver-irsaliye-"+id);
-  const irsaliyeNo = irsaliyeEl ? irsaliyeEl.value.trim() : "";
-  
-  if(!irsaliyeNo){ showToast("Lütfen irsaliye numarasını girin.","red"); return; }
-  
+  const irsaliyeNo = document.getElementById("deliver-irs-"+id).value.trim();
+  if(!irsaliyeNo){ showToast("İrsaliye numarası zorunludur.","red"); return; }
+
   mutateData(currentData => {
     const r = currentData.requests.find(x=>x.id===id);
     let stock = [...currentData.stock];
     const idx = stock.findIndex(s=>s.item.toLowerCase()===r.item.toLowerCase() && s.unit===r.unit);
-    
     if(idx>=0) stock[idx] = { ...stock[idx], qty:Number(stock[idx].qty)+Number(r.qty) };
     else stock.push({ id:uid(), item:r.item, category:r.category, unit:r.unit, qty:Number(r.qty), minLevel:0 });
-    
+
     return {
       ...currentData, stock,
-      requests: currentData.requests.map(x=>x.id===id ? { ...x, status:"Teslim Alındı", irsaliyeNo, deliveryDate:nowISO(), deliveredBy:state.session.fullName, invoiceStatus:"Bekliyor" } : x),
+      requests: currentData.requests.map(x=>x.id===id ? { ...x, status:"Teslim Alındı", irsaliyeNo } : x)
     };
   });
-  showToast(`İrsaliye işlendi, stok güncellendi.`);
+  showToast("Ürün teslim alındı ve stoğa eklendi.");
+}
+
+function handleReturnOrder(id){
+  const reason = document.getElementById("return-reason-"+id).value.trim();
+  if(!reason){ showToast("Lütfen iade gerekçesini yazın.","red"); return; }
+
+  mutateData(currentData => ({
+    ...currentData,
+    requests: currentData.requests.map(x=>x.id===id ? { ...x, status:"İade Edildi", returnReason:reason } : x)
+  }));
+  showToast("Ürün iade edildi olarak işaretlendi.", "red");
+}
+
+/* ============================ MUHASEBE ============================ */
+
+function renderMuhasebe(){
+  const { transactions } = state.data;
+  const total = transactions.reduce((s,t)=>s+(Number(t.total)||0),0);
+
+  return `
+    <h1 class="page-title font-display">Muhasebe & Giderler</h1>
+    <p class="page-sub">Tamamlanan satın almaların maliyet dökümleri.</p>
+    <div class="card stat-card" style="margin-bottom:20px;max-width:300px;">
+      <div><div class="stat-label">Toplam Harcama</div><div class="stat-value mono">${fmtTL(total)}</div></div>
+    </div>
+    <div class="card table-responsive">
+      <table>
+        <thead><tr><th>Tarih</th><th>Talep No</th><th>Ürün</th><th>Cari Firma</th><th style="text-align:right;">Tutar</th></tr></thead>
+        <tbody>
+          ${transactions.length===0 ? `<tr><td colspan="5" class="empty">Henüz harcama kaydı yok.</td></tr>` : transactions.map(t=>`
+            <tr>
+              <td style="color:var(--text-mute);">${fmtDate(t.date)}</td>
+              <td class="mono" style="color:var(--amber);">${esc(t.requestNo)}</td>
+              <td>${esc(t.item)} × ${esc(t.qty)}</td>
+              <td>${esc(t.supplier)}</td>
+              <td style="text-align:right;" class="mono">${fmtTL(t.total)}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+/* ============================ SİSTEM & TEMİZLİK (DB CLEANUP) ============================ */
+
+function renderAyarlar(){
+  return `
+    <h1 class="page-title font-display">Sistem & Veritabanı Temizliği</h1>
+    <p class="page-sub">Deneme verilerini temizleyin veya sistemi sıfırlayın.</p>
+    <div class="card" style="padding:20px;max-width:500px;">
+      <h3 style="font-size:15px;font-weight:600;margin-bottom:8px;color:var(--red);">Veritabanını Temizle</h3>
+      <p style="font-size:13px;color:var(--text-mute);margin-bottom:16px;">Tüm test taleplerini, stok kayıtlarını ve finansal geçmişi tamamen siler. Cariler ve kullanıcılar korunur.</p>
+      <button class="btn btn-danger" data-action="db-clean">🧹 Tüm Test Verilerini Temizle</button>
+    </div>
+  `;
+}
+
+function handleDbClean(){
+  if(!confirm("Emin misiniz? Tüm talepler, stoklar ve hareketler silinecektir!")) return;
+  mutateData(currentData => ({
+    ...seedData(),
+    suppliers: currentData.suppliers // Carileri koru
+  }));
+  showToast("Veritabanı başarıyla temizlendi.");
 }
 
 /* ============================ MODALS ============================ */
@@ -845,293 +791,48 @@ function renderModal(){
     const r = state.data.requests.find(x=>x.id===m.id);
     if(!r) return "";
     inner = renderRequestModalContent(r);
-  } else if(m.type === "stock-adjust"){
-    const s = state.data.stock.find(x=>x.id===m.id);
-    if(!s) return "";
+  } else if(m.type === "cari-form"){
     inner = `
-      <h3 class="font-display" style="font-size:16px;font-weight:600;margin-bottom:12px;">Manuel Stok ${m.dir==='in'?'Girişi':'Çıkışı'} — ${esc(s.item)}</h3>
-      <div style="margin-bottom:12px;">
-        <span class="field-label">Miktar <span class="req">*</span></span>
-        <input type="number" min="0" step="any" class="input" id="adjust-amount" autofocus>
-      </div>
-      <div style="margin-bottom:14px;">
-        <span class="field-label">Gerekçe</span>
-        <input class="input" id="adjust-reason" placeholder="Örn. sayım farkı, fire, iade">
-      </div>
-      <div style="display:flex;gap:8px;">
-        <button class="btn btn-primary" style="flex:1;justify-content:center;" data-action="stock-adjust-submit">Kaydet</button>
-        <button class="btn btn-ghost" data-action="close-modal">Vazgeç</button>
-      </div>
-    `;
-  } else if(m.type === "user-form"){
-    const editing = m.editingId ? state.users.find(u=>u.id===m.editingId) : null;
-    inner = `
-      <h3 class="font-display" style="font-size:16px;font-weight:600;margin-bottom:12px;">${editing?"Kullanıcıyı Düzenle":"Yeni Kullanıcı"}</h3>
-      <form id="user-form">
-        <div style="margin-bottom:12px;">
-          <span class="field-label">Ad Soyad <span class="req">*</span></span>
-          <input class="input" id="uf-fullname" value="${editing?esc(editing.fullName):''}" autofocus>
-        </div>
-        <div style="margin-bottom:12px;">
-          <span class="field-label">Kullanıcı adı <span class="req">*</span></span>
-          <input class="input" id="uf-username" value="${editing?esc(editing.username):''}">
-        </div>
-        <div style="margin-bottom:12px;">
-          <span class="field-label">${editing?'Yeni şifre (değiştirmek istemiyorsanız boş bırakın)':'Şifre'} ${editing?'':'<span class=\"req\">*</span>'}</span>
-          <input type="text" class="input" id="uf-password" placeholder="${editing?'••••••••':''}">
-        </div>
-        <div style="margin-bottom:16px;">
-          <span class="field-label">Rol <span class="req">*</span></span>
-          <select class="input" id="uf-role">
-            ${Object.entries(ROLES).map(([k,v])=>`<option value="${k}" ${editing&&editing.role===k?'selected':''}>${esc(v.label)}</option>`).join("")}
-          </select>
-        </div>
+      <h3 class="font-display" style="font-size:16px;font-weight:600;margin-bottom:12px;">Yeni Cari Firma Ekle</h3>
+      <form id="cari-form">
+        <div style="margin-bottom:12px;"><span class="field-label">Firma Ünvanı <span class="req">*</span></span><input class="input" id="cf-name" autofocus></div>
+        <div style="margin-bottom:12px;"><span class="field-label">Yetkili Kişi</span><input class="input" id="cf-contact"></div>
+        <div style="margin-bottom:12px;"><span class="field-label">Vergi Dairesi / No</span><input class="input" id="cf-tax"></div>
+        <div style="margin-bottom:16px;"><span class="field-label">Telefon</span><input class="input" id="cf-phone"></div>
         <div style="display:flex;gap:8px;">
-          <button type="submit" class="btn btn-primary" style="flex:1;justify-content:center;">💾 Kaydet</button>
+          <button type="submit" class="btn btn-primary" style="flex:1;justify-content:center;">Kaydet</button>
           <button type="button" class="btn btn-ghost" data-action="close-modal">Vazgeç</button>
         </div>
       </form>
     `;
   }
-  return `<div class="modal-overlay" data-action="overlay-close">
-    <div class="card modal" onclick="event.stopPropagation()">${inner}</div>
-  </div>`;
+  return `<div class="modal-overlay" data-action="overlay-close"><div class="card modal" onclick="event.stopPropagation()">${inner}</div></div>`;
 }
 
-function handleStockAdjustSubmit(){
-  const m = state.modal;
-  const amount = document.getElementById("adjust-amount").value;
-  if(!amount || Number(amount)<=0){ showToast("Geçerli bir miktar girin.","red"); return; }
-  const delta = m.dir==="in" ? Number(amount) : -Number(amount);
+function handleCariFormSubmit(){
+  const name = document.getElementById("cf-name").value.trim();
+  if(!name){ showToast("Firma ünvanı zorunludur.","red"); return; }
   
-  mutateData(currentData => {
-    return { ...currentData, stock: currentData.stock.map(s=>s.id===m.id?{...s,qty:Math.max(0,Number(s.qty)+delta)}:s) };
-  });
+  mutateData(currentData => ({
+    ...currentData,
+    suppliers: [...(currentData.suppliers||[]), {
+      id: uid(), name,
+      contact: document.getElementById("cf-contact").value.trim(),
+      taxNo: document.getElementById("cf-tax").value.trim(),
+      phone: document.getElementById("cf-phone").value.trim()
+    }]
+  }));
   state.modal = null;
-  showToast(m.dir==="in" ? "Stok girişi kaydedildi." : "Stok çıkışı kaydedildi.");
+  showToast("Cari firma eklendi.");
 }
 
-function handleMinBlur(id){
-  const el = document.getElementById("min-"+id);
-  const val = Number(el.value);
-  if(Number.isNaN(val) || val<0) return;
-  mutateData(currentData => {
-    return { ...currentData, stock: currentData.stock.map(s=>s.id===id?{...s,minLevel:val}:s) };
-  });
-  showToast("Kritik seviye güncellendi.");
-}
-
-/* ============================ MUHASEBE ============================ */
-
-function renderMuhasebe(){
-  const { transactions, requests } = state.data;
-  
-  const pendingInvoices = requests.filter(r => r.status === "Teslim Alındı" && r.invoiceStatus === "Bekliyor");
-  
-  const total = transactions.reduce((s,t)=>s+(Number(t.total)||0),0);
-  const byCategory = {};
-  transactions.forEach(t=>{
-    const cat = (requests.find(r=>r.no===t.requestNo)||{}).category || "Diğer";
-    byCategory[cat] = (byCategory[cat]||0) + Number(t.total||0);
-  });
-  const catEntries = Object.entries(byCategory).sort((a,b)=>b[1]-a[1]);
-  const bySupplier = {};
-  transactions.forEach(t=>{ const k=t.supplier||"Belirtilmemiş"; bySupplier[k]=(bySupplier[k]||0)+Number(t.total||0); });
-  const supEntries = Object.entries(bySupplier).sort((a,b)=>b[1]-a[1]).slice(0,6);
-  const sorted = [...transactions].sort((a,b)=>new Date(b.date)-new Date(a.date));
-
-  return `
-    <h1 class="page-title font-display">Muhasebe & Fatura Onayı</h1>
-    <p class="page-sub">Depoya giren ürünlerin faturalarını teklif fiyatlarıyla karşılaştırıp sisteme işleyin.</p>
-
-    <h2 style="font-size:13px;font-weight:600;margin:20px 0 10px;">🧾 Fatura Onayı Bekleyen Teslimatlar (${pendingInvoices.length})</h2>
-    ${pendingInvoices.length===0 ? `<div class="card empty" style="margin-bottom:24px;">Onay bekleyen fatura bulunmuyor.</div>` : pendingInvoices.map(r=>`
-      <div class="card" style="padding:16px;margin-bottom:10px;">
-        <div style="display:flex; justify-content:space-between; flex-wrap:wrap; gap:10px; margin-bottom:8px;">
-          <div>
-            <p style="font-size:13px;font-weight:500;margin:0 0 4px;"><span class="mono" style="color:var(--amber);font-size:11px;margin-right:6px;">${esc(r.no)}</span>${esc(r.item)} <span class="mono" style="color:var(--text-mute);font-size:11px;font-weight:400;">× ${esc(r.qty)} ${esc(r.unit)}</span></p>
-            <p style="font-size:11px;color:var(--text-mute);margin:0;">Tedarikçi: ${esc(r.supplier)} · İrsaliye: ${esc(r.irsaliyeNo)}</p>
-          </div>
-          <div style="background:rgba(232,163,61,.1); padding:6px 12px; border-radius:6px; border:1px solid rgba(232,163,61,.2);">
-            <span style="font-size:10px; color:var(--text-mute); display:block;">Sistemdeki Teklif Fiyatı (Birim)</span>
-            <span class="mono" style="font-size:14px; font-weight:600; color:var(--amber);">${fmtTL(r.unitPrice)}</span>
-          </div>
-        </div>
-        
-        <div class="flex-wrap-gap">
-          <input class="input" style="width:160px;" id="acc-invoice-${r.id}" placeholder="Fatura No (Zorunlu)">
-          <input type="number" min="0" step="any" class="input" style="width:160px;" id="acc-price-${r.id}" value="${r.unitPrice}" placeholder="Gerçekleşen Fiyat (₺)">
-          <button class="btn btn-primary" data-action="invoice-approve" data-id="${r.id}">✅ Kabul Et & İşle</button>
-          <button class="btn btn-danger" data-action="invoice-reject" data-id="${r.id}">✕ Reddet</button>
-        </div>
-      </div>
-    `).join("")}
-
-    <div class="stat-grid" style="grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); margin-top:30px;">
-      ${statCard("📈","Toplam Gider",fmtTL(total),"amber")}
-      ${statCard("📋","İşlenmiş Fatura",transactions.length,"slate")}
-      ${statCard("🚚","Tedarikçi Sayısı",new Set(transactions.map(t=>t.supplier).filter(Boolean)).size,"teal")}
-    </div>
-
-    <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(300px, 1fr));gap:16px;margin-bottom:20px;">
-      <div class="card" style="padding:16px;">
-        <h2 style="font-size:13px;font-weight:600;margin:0 0 12px;">Kategoriye Göre Harcama</h2>
-        ${catEntries.length===0 ? `<p class="empty">Henüz veri yok.</p>` : catEntries.map(([cat,amt])=>`
-          <div style="margin-bottom:8px;">
-            <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;">
-              <span style="color:var(--text-dim);">${esc(cat)}</span><span class="mono" style="color:var(--text);">${fmtTL(amt)}</span>
-            </div>
-            <div class="bar-track"><div class="bar-fill" style="width:${total?(amt/total)*100:0}%;"></div></div>
-          </div>
-        `).join("")}
-      </div>
-      <div class="card" style="padding:16px;">
-        <h2 style="font-size:13px;font-weight:600;margin:0 0 12px;">Tedarikçiye Göre Harcama</h2>
-        ${supEntries.length===0 ? `<p class="empty">Henüz veri yok.</p>` : supEntries.map(([sup,amt])=>`
-          <div style="display:flex;justify-content:space-between;font-size:13px;padding:6px 0;border-top:1px solid #1D2430;">
-            <span>${esc(sup)}</span><span class="mono">${fmtTL(amt)}</span>
-          </div>
-        `).join("")}
-      </div>
-    </div>
-
-    <div class="card table-responsive">
-      <div style="padding:12px 16px;border-bottom:1px solid #1D2430;"><h2 style="font-size:13px;font-weight:600;">İşlem Kayıtları (Giderler)</h2></div>
-      ${sorted.length===0 ? `<p class="empty">Henüz gider kaydı yok.</p>` : `
-      <table>
-        <thead><tr><th>Tarih</th><th>Talep No</th><th>Ürün</th><th>Tedarikçi</th><th>Fatura No</th><th style="text-align:right;">B.Fiyat</th><th style="text-align:right;">Toplam Tutar</th></tr></thead>
-        <tbody>
-          ${sorted.map(t=>`<tr>
-            <td style="color:var(--text-mute);font-size:12px;">${fmtDate(t.date)}</td>
-            <td class="mono" style="font-size:11px;color:var(--amber);">${esc(t.requestNo)}</td>
-            <td>${esc(t.item)} <span class="mono" style="color:var(--text-mute);font-size:11px;">×${esc(t.qty)}</span></td>
-            <td style="color:var(--text-dim);">${esc(t.supplier||"—")}</td>
-            <td class="mono" style="font-size:11px;color:var(--text-dim);">${esc(t.invoiceNo||"—")}</td>
-            <td style="text-align:right;" class="mono">${fmtTL(t.unitPrice)}</td>
-            <td style="text-align:right;" class="mono">${fmtTL(t.total)}</td>
-          </tr>`).join("")}
-        </tbody>
-      </table>
-      `}
-    </div>
-  `;
-}
-
-function handleInvoiceApprove(id, isApprove){
-  const r = state.data.requests.find(x=>x.id===id);
-  
-  if (!isApprove) {
-     mutateData(currentData => {
-       return {
-         ...currentData,
-         requests: currentData.requests.map(x=>x.id===id ? { ...x, status: "Fatura Reddedildi", invoiceStatus: "Reddedildi" } : x),
-       };
-     });
-     showToast("Fatura reddedildi. Satın alma birimi ile görüşün.", "red");
-     return;
-  }
-  
-  const invEl = document.getElementById("acc-invoice-"+id);
-  const priceEl = document.getElementById("acc-price-"+id);
-  const invoiceNo = invEl ? invEl.value.trim() : "";
-  const actualPrice = priceEl ? Number(priceEl.value) : 0;
-  
-  if(!invoiceNo || actualPrice <= 0){ showToast("Fatura numarası ve geçerli bir fiyat girin.", "red"); return; }
-  
-  // Teklif ile gerçekleşen fiyat farkı kontrolü
-  if(actualPrice !== r.unitPrice) {
-     if(!confirm(`DİKKAT: Teklif fiyatı (${r.unitPrice} ₺) ile Fatura fiyatı (${actualPrice} ₺) uyuşmuyor. Yine de onaylamak istiyor musunuz?`)){
-         return;
-     }
-  }
-
-  mutateData(currentData => {
-    const total = actualPrice * Number(r.qty);
-    const tx = { id:uid(), date:nowISO(), item:r.item, qty:r.qty, unitPrice:actualPrice, total, requestNo:r.no, invoiceNo, type:"Satın Alma Gideri", supplier:r.supplier };
-    
-    return {
-      ...currentData,
-      transactions:[tx, ...currentData.transactions],
-      requests: currentData.requests.map(x=>x.id===id ? { 
-        ...x, 
-        status: "Fatura Onaylandı", 
-        invoiceStatus: "Onaylandı", 
-        invoiceNo, 
-        actualUnitPrice: actualPrice 
-      } : x),
-    };
-  });
-  showToast("Fatura sisteme işlendi.", "green");
-}
-
-/* ============================ KULLANICILAR ============================ */
-
-function renderKullanicilar(){
-  return `
-    <div style="display:flex;justify-content:space-between;align-items:center; flex-wrap:wrap; gap:10px;">
-      <h1 class="page-title font-display">Kullanıcılar & Yetkiler</h1>
-      <button class="btn btn-primary" data-action="user-new">➕ Yeni kullanıcı</button>
-    </div>
-    <p class="page-sub">🛡 Yalnızca yöneticiler kullanıcı ekleyebilir, rol atayabilir ve şifre belirleyebilir.</p>
-    <div class="card table-responsive">
-      <table>
-        <thead><tr><th>Ad Soyad</th><th>Kullanıcı Adı</th><th>Rol</th><th>Durum</th><th style="text-align:right;">İşlem</th></tr></thead>
-        <tbody>
-          ${state.users.map(u=>`<tr>
-            <td>${esc(u.fullName)}${u.id===state.session.id?' <span style="font-size:10px;color:var(--text-mute);">(siz)</span>':''}</td>
-            <td class="mono" style="font-size:12px;color:var(--text-dim);">${esc(u.username)}</td>
-            <td>${badge(ROLES[u.role]?.label||u.role, ROLES[u.role]?.color||'slate')}</td>
-            <td><button class="badge-btn" data-action="user-toggle-active" data-id="${u.id}">${badge(u.active?"Aktif":"Devre Dışı", u.active?"green":"red")}</button></td>
-            <td style="text-align:right;">
-              <button class="btn-icon" title="Düzenle" data-action="user-edit" data-id="${u.id}">✎</button>
-              <button class="btn-icon danger" title="Sil" data-action="user-delete" data-id="${u.id}">🗑</button>
-            </td>
-          </tr>`).join("")}
-        </tbody>
-      </table>
-    </div>
-  `;
-}
-
-function handleUserFormSubmit(){
-  const m = state.modal;
-  const editingId = m.editingId;
-  const username = document.getElementById("uf-username").value.trim();
-  const fullName = document.getElementById("uf-fullname").value.trim();
-  const password = document.getElementById("uf-password").value;
-  const role = document.getElementById("uf-role").value;
-
-  if(!username || !fullName){ showToast("Kullanıcı adı ve ad soyad zorunlu.","red"); return; }
-  if(!editingId && !password){ showToast("Yeni kullanıcı için şifre belirleyin.","red"); return; }
-  const taken = state.users.some(u=>u.username.toLowerCase()===username.toLowerCase() && u.id!==editingId);
-  if(taken){ showToast("Bu kullanıcı adı zaten kullanılıyor.","red"); return; }
-
-  let next;
-  if(editingId){
-    next = state.users.map(u=>u.id===editingId ? { ...u, username, fullName, role, password: password?password:u.password } : u);
-    state.modal = null;
-    saveUsers(next);
-    showToast("Kullanıcı güncellendi.");
-  } else {
-    next = [...state.users, { id:uid(), username, password, fullName, role, active:true, createdAt:nowISO() }];
-    state.modal = null;
-    saveUsers(next);
-    showToast("Kullanıcı oluşturuldu.");
-  }
-}
-
-function handleUserToggleActive(id){
-  if(id===state.session.id){ showToast("Kendi hesabınızı devre dışı bırakamazsınız.","red"); return; }
-  saveUsers(state.users.map(x=>x.id===id?{...x,active:!x.active}:x));
-}
-
-function handleUserDelete(id){
-  if(id===state.session.id){ showToast("Kendi hesabınızı silemezsiniz.","red"); return; }
-  const u = state.users.find(x=>x.id===id);
-  const adminCount = state.users.filter(x=>x.role==="admin" && x.active).length;
-  if(u.role==="admin" && adminCount<=1){ showToast("Son yönetici hesabı silinemez.","red"); return; }
-  saveUsers(state.users.filter(x=>x.id!==id));
-  showToast("Kullanıcı silindi.");
+function handleCariDelete(id){
+  if(!confirm("Bu firmayı silmek istediğinize emin misiniz?")) return;
+  mutateData(currentData => ({
+    ...currentData,
+    suppliers: currentData.suppliers.filter(s => s.id !== id)
+  }));
+  showToast("Firma silindi.");
 }
 
 /* ============================ EVENT DELEGATION ============================ */
@@ -1139,7 +840,7 @@ function handleUserDelete(id){
 document.addEventListener("submit", (e)=>{
   if(e.target.id === "login-form"){ e.preventDefault(); handleLogin(); }
   else if(e.target.id === "new-talep-form"){ e.preventDefault(); handleNewTalep(); }
-  else if(e.target.id === "user-form"){ e.preventDefault(); handleUserFormSubmit(); }
+  else if(e.target.id === "cari-form"){ e.preventDefault(); handleCariFormSubmit(); }
 });
 
 document.addEventListener("click", (e)=>{
@@ -1148,11 +849,7 @@ document.addEventListener("click", (e)=>{
   const action = t.dataset.action;
   const id = t.dataset.id;
 
-  if(action === "toggle-login-pw"){
-    const el = document.getElementById("login-password");
-    el.type = el.type === "password" ? "text" : "password";
-  }
-  else if(action === "nav"){ state.tab = t.dataset.tab; state.modal=null; render(); }
+  if(action === "nav"){ state.tab = t.dataset.tab; state.modal=null; render(); }
   else if(action === "logout"){ state.session = null; render(); }
   else if(action === "select-request"){ state.modal = { type:"request-detail", id }; render(); }
   else if(action === "close-modal"){ state.modal = null; render(); }
@@ -1161,24 +858,16 @@ document.addEventListener("click", (e)=>{
   else if(action === "onay-reject"){ handleOnayDecide(id,"reject"); }
   else if(action === "order-place"){ handlePlaceOrder(id); }
   else if(action === "order-receive"){ handleReceiveOrder(id); }
-  else if(action === "invoice-approve"){ handleInvoiceApprove(id, true); }
-  else if(action === "invoice-reject"){ handleInvoiceApprove(id, false); }
-  else if(action === "stock-adjust-open"){ state.modal = { type:"stock-adjust", id, dir:t.dataset.dir }; render(); }
-  else if(action === "stock-adjust-submit"){ handleStockAdjustSubmit(); }
-  else if(action === "user-new"){ state.modal = { type:"user-form", editingId:null }; render(); }
-  else if(action === "user-edit"){ state.modal = { type:"user-form", editingId:id }; render(); }
-  else if(action === "user-toggle-active"){ handleUserToggleActive(id); }
-  else if(action === "user-delete"){ handleUserDelete(id); }
+  else if(action === "order-return"){ handleReturnOrder(id); }
+  else if(action === "cari-new"){ state.modal = { type:"cari-form" }; render(); }
+  else if(action === "cari-delete"){ handleCariDelete(id); }
+  else if(action === "db-clean"){ handleDbClean(); }
 });
 
 document.addEventListener("input", (e)=>{
   if(e.target.id === "talep-search"){
     state.talepQuery = e.target.value;
     _pendingFocus = { id:"talep-search", pos:e.target.selectionStart };
-    render();
-  } else if(e.target.id === "stok-search"){
-    state.stokQuery = e.target.value;
-    _pendingFocus = { id:"stok-search", pos:e.target.selectionStart };
     render();
   }
 });
@@ -1190,14 +879,7 @@ document.addEventListener("change", (e)=>{
   }
 });
 
-document.addEventListener("focusout", (e)=>{
-  if(e.target.dataset && e.target.dataset.action === "min-input"){
-    handleMinBlur(e.target.dataset.id);
-  }
-});
-
-/* ============================ INIT ============================ */
-/* ============================ SUPABASE ============================ */
+/* ============================ SUPABASE INIT ============================ */
 
 const SUPABASE_URL = "https://tywotoikulbbsorxmybd.supabase.co";
 const SUPABASE_KEY = "sb_publishable_ZpEPd2NCey2LAYz_lE_m1w_j0I8PWz8";
@@ -1207,30 +889,19 @@ function startSupabase() {
   script.src = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2";
 
   script.onload = async function () {
-    const db = window.supabase.createClient(
-      SUPABASE_URL,
-      SUPABASE_KEY
-    );
-
+    const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
     window.storage = {
       async get(key) {
-        const { data, error } = await db
-          .from("app_storage")
-          .select("value")
-          .eq("key", key)
-          .maybeSingle();
+        const { data, error } = await db.from("app_storage").select("value").eq("key", key).maybeSingle();
         if (error) throw error;
         if (!data) return null;
         return { value: data.value };
       },
-
       async set(key, value) {
-        const { error } = await db
-          .from("app_storage")
-          .upsert(
-            { key: key, value: value, updated_at: new Date().toISOString() },
-            { onConflict: "key" }
-          );
+        const { error } = await db.from("app_storage").upsert(
+          { key: key, value: value, updated_at: new Date().toISOString() },
+          { onConflict: "key" }
+        );
         if (error) throw error;
         return true;
       }
@@ -1239,7 +910,6 @@ function startSupabase() {
   };
 
   script.onerror = function () {
-    console.error("Supabase kütüphanesi yüklenemedi.");
     alert("Supabase bağlantısı kurulamadı.");
   };
 
@@ -1247,8 +917,6 @@ function startSupabase() {
 }
 
 startSupabase();
-
 </script>
-
 </body>
 </html>
