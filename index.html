@@ -147,6 +147,8 @@
 <body>
 <div id="app"></div>
 <div id="toast-container"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     
 <script>
 /* ============================ DATA / HELPERS ============================ */
@@ -1068,64 +1070,77 @@ document.addEventListener("focusout", (e)=>{
 });
 
 /* ============================ INIT ============================ */
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-
-<script>
+/* ============================ SUPABASE ============================ */
 
 const SUPABASE_URL = "https://tywotoikulbbsorxmybd.supabase.co";
 const SUPABASE_KEY = "sb_publishable_ZpEPd2NCey2LAYz_lE_m1w_j0I8PWz8";
 
-const db = window.supabase.createClient(
-  SUPABASE_URL,
-  SUPABASE_KEY
-);
+function startSupabase() {
+  const script = document.createElement("script");
 
-window.storage = {
+  script.src = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2";
 
-  async get(key) {
-    const { data, error } = await db
-      .from("app_storage")
-      .select("value")
-      .eq("key", key)
-      .maybeSingle();
+  script.onload = async function () {
 
-    if (error) throw error;
+    const db = window.supabase.createClient(
+      SUPABASE_URL,
+      SUPABASE_KEY
+    );
 
-    if (!data) return null;
+    window.storage = {
 
-    return {
-      value: data.value
+      async get(key) {
+
+        const { data, error } = await db
+          .from("app_storage")
+          .select("value")
+          .eq("key", key)
+          .maybeSingle();
+
+        if (error) throw error;
+
+        if (!data) return null;
+
+        return {
+          value: data.value
+        };
+      },
+
+      async set(key, value) {
+
+        const { error } = await db
+          .from("app_storage")
+          .upsert(
+            {
+              key: key,
+              value: value,
+              updated_at: new Date().toISOString()
+            },
+            {
+              onConflict: "key"
+            }
+          );
+
+        if (error) throw error;
+
+        return true;
+      }
     };
-  },
 
-  async set(key, value) {
-    const { error } = await db
-      .from("app_storage")
-      .upsert(
-        {
-          key: key,
-          value: value,
-          updated_at: new Date().toISOString()
-        },
-        {
-          onConflict: "key"
-        }
-      );
+    loadAll();
+  };
 
-    if (error) throw error;
+  script.onerror = function () {
+    console.error("Supabase kütüphanesi yüklenemedi.");
+    alert("Supabase bağlantısı kurulamadı.");
+  };
 
-    return true;
-  }
-};
+  document.head.appendChild(script);
+}
 
-
-/* ============================ INIT ============================ */
-
-loadAll();
+startSupabase();
 
 </script>
 
-</body>
-</html>
 </body>
 </html>
