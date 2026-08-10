@@ -1068,7 +1068,57 @@ document.addEventListener("focusout", (e)=>{
 });
 
 /* ============================ INIT ============================ */
+<script>
+const SUPABASE_URL = "https://tywotoikulbbsorxmybd.supabase.co";
+const SUPABASE_KEY = "sb_publishable_ZpEPd2NCey2LAYz_lE_m1w_j0I8PWz8";
 
+const db = window.supabase.createClient(
+  SUPABASE_URL,
+  SUPABASE_KEY
+);
+
+/*
+  Eski window.storage sistemini Supabase'e bağlıyoruz.
+  Böylece mevcut kodunun tamamını değiştirmemize gerek kalmıyor.
+*/
+window.storage = {
+
+  async get(key) {
+    const { data, error } = await db
+      .from("app_storage")
+      .select("value")
+      .eq("key", key)
+      .maybeSingle();
+
+    if (error) throw error;
+
+    if (!data) return null;
+
+    return {
+      value: data.value
+    };
+  },
+
+  async set(key, value) {
+    const { error } = await db
+      .from("app_storage")
+      .upsert(
+        {
+          key: key,
+          value: value,
+          updated_at: new Date().toISOString()
+        },
+        {
+          onConflict: "key"
+        }
+      );
+
+    if (error) throw error;
+
+    return true;
+  }
+};
+</script>
 loadAll();
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </script>
