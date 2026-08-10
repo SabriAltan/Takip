@@ -77,7 +77,7 @@
   .user-chip-name{ font-size:12px; font-weight:500; color:var(--text); }
   .user-chip-role{ font-size:10px; color:var(--text-mute); }
 
-  main{ flex:1; min-width:0; padding:28px; max-width:1080px; }
+  main{ flex:1; min-width:0; padding:28px; max-width:1080px; overflow-x: hidden; }
   .page-title{ font-size:24px; font-weight:600; color:var(--text); }
   .page-sub{ font-size:13px; color:var(--text-mute); margin:4px 0 20px; }
 
@@ -97,7 +97,8 @@
   .pipe-line{ height:2px; flex:1; background:var(--border); margin-top:4px; }
   .pipe-line.done{ background:var(--amber); }
 
-  table{ width:100%; border-collapse:collapse; font-size:13px; }
+  .table-responsive { width: 100%; overflow-x: auto; }
+  table{ width:100%; border-collapse:collapse; font-size:13px; min-width: 600px; }
   thead tr{ background:var(--surface2); text-align:left; }
   th{ padding:10px 14px; font-size:10px; text-transform:uppercase; letter-spacing:.04em; color:var(--text-mute); font-weight:600; }
   td{ padding:10px 14px; border-top:1px solid #1D2430; }
@@ -111,14 +112,15 @@
   .modal-row .v{ font-size:13px; color:var(--text); text-align:right; }
 
   #toast-container{ position:fixed; bottom:20px; right:20px; z-index:100; }
-  .toast{ padding:10px 16px; border-radius:8px; font-size:13px; font-weight:600; border:1px solid; box-shadow:0 8px 24px rgba(0,0,0,.35); }
+  .toast{ padding:10px 16px; border-radius:8px; font-size:13px; font-weight:600; border:1px solid; box-shadow:0 8px 24px rgba(0,0,0,.35); margin-top:10px;}
   .toast.green{ background:rgba(52,211,153,.13); border-color:rgba(52,211,153,.4); color:#6EE7B7; }
   .toast.red{ background:rgba(240,85,79,.13); border-color:rgba(240,85,79,.4); color:#FCA5A1; }
+  .toast.amber{ background:rgba(232,163,61,.13); border-color:rgba(232,163,61,.4); color:#F0B65E; }
 
   .list-item{ padding:14px 16px; cursor:pointer; }
   .list-item:hover{ border-color:var(--border-strong); }
   .filters-row{ display:flex; flex-wrap:wrap; gap:8px; margin-bottom:16px; align-items:center; }
-  .search-wrap{ position:relative; }
+  .search-wrap{ position:relative; flex-grow: 1; max-width: 300px; }
   .search-wrap .input{ padding-left:32px; }
   .search-wrap .ic{ position:absolute; left:10px; top:50%; transform:translateY(-50%); color:var(--text-mute); font-size:13px; }
   .empty{ text-align:center; padding:32px; color:var(--text-mute); font-size:13px; }
@@ -127,20 +129,16 @@
 
   .login-wrap{ min-height:100vh; width:100%; display:flex; align-items:center; justify-content:center; padding:16px; }
   .login-box{ width:100%; max-width:360px; }
-  .login-head{ display:flex; flex-direction:column; align-items:center; margin-bottom:24px; }
-  .login-logo{ width:56px; height:56px; border-radius:16px; background:var(--amber); display:flex; align-items:center; justify-content:center; margin-bottom:12px; font-size:26px; }
-  .login-note{ font-size:11px; color:var(--text-mute); text-align:center; margin-top:16px; }
-  .input-icon-wrap{ position:relative; }
-  .input-icon-wrap .ic-left{ position:absolute; left:11px; top:50%; transform:translateY(-50%); color:var(--text-mute); font-size:14px; }
-  .input-icon-wrap .input{ padding-left:32px; }
-  .input-icon-wrap .ic-right{ position:absolute; right:9px; top:50%; transform:translateY(-50%); background:none; border:none; color:var(--text-mute); padding:4px; }
-  .login-error{ font-size:12px; color:#FCA5A1; background:rgba(240,85,79,.1); border:1px solid rgba(240,85,79,.3); border-radius:8px; padding:8px 12px; margin-bottom:12px; }
+  
+  .flex-wrap-gap { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 
   @media (max-width:800px){
     .stat-grid{ grid-template-columns:repeat(2,1fr); }
     .sidebar{ width:64px; }
-    .sidebar-title,.sidebar-sub,.nav-item span,.user-chip-name,.user-chip-role{ display:none; }
+    .sidebar-title,.sidebar-sub,.nav-item span:not(:first-child),.user-chip-name,.user-chip-role{ display:none; }
     main{ padding:16px; }
+    .pipeline-wrap-desktop { display: none; }
+    .flex-wrap-gap .input, .flex-wrap-gap .btn { flex: 1 1 100%; min-width: 100%; }
   }
 </style>
 </head>
@@ -179,7 +177,8 @@ function esc(s){
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 function statusTone(status){
-  return { "Beklemede":"blue","Onaylandı":"teal","Reddedildi":"red","Sipariş Verildi":"amber","Teslim Alındı":"green" }[status] || "slate";
+  if (status.includes("Reddedildi")) return "red";
+  return { "Beklemede":"blue","Onaylandı":"teal","Sipariş Verildi":"amber","Teslim Alındı":"green","Fatura Onaylandı":"slate" }[status] || "slate";
 }
 function badge(text, tone){ return `<span class="badge tone-${tone}">${esc(text)}</span>`; }
 
@@ -195,13 +194,11 @@ let state = {
   modal:null,
   talepQuery:"", talepStatusFilter:"Tümü",
   stokQuery:"",
-  onayNotes:{}, orderForm:{}, deliverForm:{},
-  userForm:{ show:false, editingId:null },
   loginError:"",
 };
 let _pendingFocus = null;
 
-/* ============================ STORAGE ============================ */
+/* ============================ STORAGE (CONCURRENCY UPGRADED) ============================ */
 
 async function loadAll(){
   try{
@@ -225,16 +222,31 @@ async function loadAll(){
   render();
 }
 
+// Background auto-refresh for realtime feeling
+setInterval(() => {
+  if (state.session && !state.modal && !document.activeElement.classList.contains('input')) {
+    loadAll();
+  }
+}, 5000);
+
+// Concurrency-safe mutator: Fetches latest before saving
+async function mutateData(mutationFn){
+  try {
+    const r2 = await window.storage.get("workflow-data", true); 
+    let current = r2 ? JSON.parse(r2.value) : seedData();
+    let next = mutationFn(current);
+    await window.storage.set("workflow-data", JSON.stringify(next), true);
+    state.data = next;
+    render();
+  } catch (e) {
+    showToast("İşlem kaydedilirken bir hata oluştu.", "red");
+  }
+}
+
 async function saveUsers(next){
   state.users = next;
   try{ await window.storage.set("users", JSON.stringify(next), true); }
   catch(e){ showToast("Kullanıcı verisi kaydedilemedi.", "red"); }
-  render();
-}
-async function saveData(next){
-  state.data = next;
-  try{ await window.storage.set("workflow-data", JSON.stringify(next), true); }
-  catch(e){ showToast("Veri kaydedilemedi.", "red"); }
   render();
 }
 
@@ -243,9 +255,11 @@ async function saveData(next){
 function showToast(msg, tone){
   tone = tone || "green";
   const c = document.getElementById("toast-container");
-  c.innerHTML = `<div class="toast ${tone}">${esc(msg)}</div>`;
-  clearTimeout(window._toastTimer);
-  window._toastTimer = setTimeout(()=>{ c.innerHTML = ""; }, 2600);
+  const t = document.createElement("div");
+  t.className = `toast ${tone}`;
+  t.innerHTML = esc(msg);
+  c.appendChild(t);
+  setTimeout(()=>{ t.style.opacity="0"; setTimeout(()=>t.remove(), 300); }, 3000);
 }
 
 /* ============================ RENDER ROOT ============================ */
@@ -317,7 +331,6 @@ function renderLoginScreen(loading){
         <p style="font-size:11px;color:var(--text-mute);text-align:center;margin:12px 0 0;">İlk kurulum: admin / admin123</p>
       </form>
     </div>
-    <p class="login-note">Bu sistemdeki veriler, erişimi olan tüm ekip üyeleri arasında paylaşılır.</p>
   </div></div>`;
 }
 
@@ -348,7 +361,7 @@ const NAV = [
   { key:"onay", label:"Onay Bekleyenler", icon:"✅", roles:["admin","onaylayan"] },
   { key:"satinalma", label:"Satın Alma", icon:"🛒", roles:["admin","satinalma"] },
   { key:"stok", label:"Stok", icon:"🏬", roles:["admin","depo","satinalma","onaylayan"] },
-  { key:"muhasebe", label:"Muhasebe / Raporlar", icon:"📈", roles:["admin"] },
+  { key:"muhasebe", label:"Muhasebe", icon:"📈", roles:["admin"] },
   { key:"kullanicilar", label:"Kullanıcılar", icon:"👥", roles:["admin"] },
 ];
 
@@ -406,7 +419,7 @@ function renderDashboard(){
   const pending = requests.filter(r=>r.status==="Beklemede").length;
   const approved = requests.filter(r=>r.status==="Onaylandı").length;
   const ordered = requests.filter(r=>r.status==="Sipariş Verildi").length;
-  const delivered = requests.filter(r=>r.status==="Teslim Alındı").length;
+  const delivered = requests.filter(r=>r.status==="Teslim Alındı" || r.status==="Fatura Onaylandı").length;
   const totalSpend = transactions.reduce((s,t)=>s+(Number(t.total)||0),0);
   const lowStock = stock.filter(s=>Number(s.qty)<=Number(s.minLevel));
   const recent = [...requests].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)).slice(0,6);
@@ -422,7 +435,7 @@ function renderDashboard(){
       ${statCard("📦","Teslim Alındı",delivered,"slate")}
     </div>
 
-    <div style="display:grid;grid-template-columns:2fr 1fr;gap:16px;">
+    <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(300px, 1fr));gap:16px;">
       <div class="card" style="padding:16px;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
           <h2 style="font-size:13px;font-weight:600;">Son Talepler</h2>
@@ -432,7 +445,7 @@ function renderDashboard(){
           <div style="display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-top:1px solid #1D2430;">
             <div style="min-width:0;">
               <p style="font-size:13px;color:var(--text);margin:0;">${esc(r.item)} <span class="mono" style="color:var(--text-mute);font-size:11px;">×${esc(r.qty)} ${esc(r.unit)}</span></p>
-              <p style="font-size:11px;color:var(--text-mute);margin:2px 0 0;">${esc(r.no)} · ${esc(r.requesterName)} · ${fmtDate(r.createdAt)}</p>
+              <p style="font-size:11px;color:var(--text-mute);margin:2px 0 0;">${esc(r.no)} · ${esc(r.requesterName)}</p>
             </div>
             ${badge(r.status, statusTone(r.status))}
           </div>
@@ -519,20 +532,22 @@ function handleNewTalep(){
   const item = document.getElementById("talep-item").value.trim();
   const qty = document.getElementById("talep-qty").value;
   if(!item || !qty || Number(qty)<=0){ showToast("Ürün adı ve geçerli bir miktar girin.","red"); return; }
-  const counter = (state.data.reqCounter||0)+1;
-  const req = {
-    id:uid(), no:"TLP-"+String(counter).padStart(4,"0"),
-    item, category:document.getElementById("talep-category").value,
-    qty:Number(qty), unit:document.getElementById("talep-unit").value,
-    priority:document.getElementById("talep-priority").value,
-    note:document.getElementById("talep-note").value.trim(),
-    requester:state.session.id, requesterName:state.session.fullName,
-    createdAt:nowISO(), status:"Beklemede",
-  };
-  const next = { ...state.data, requests:[req, ...state.data.requests], reqCounter:counter };
-  state.tab = "talepler";
-  saveData(next);
-  showToast(`${req.no} numaralı talep oluşturuldu.`);
+  
+  mutateData(currentData => {
+    const counter = (currentData.reqCounter||0)+1;
+    const req = {
+      id:uid(), no:"TLP-"+String(counter).padStart(4,"0"),
+      item, category:document.getElementById("talep-category").value,
+      qty:Number(qty), unit:document.getElementById("talep-unit").value,
+      priority:document.getElementById("talep-priority").value,
+      note:document.getElementById("talep-note").value.trim(),
+      requester:state.session.id, requesterName:state.session.fullName,
+      createdAt:nowISO(), status:"Beklemede",
+    };
+    state.tab = "talepler";
+    showToast(`${req.no} numaralı talep oluşturuldu.`);
+    return { ...currentData, requests:[req, ...currentData.requests], reqCounter:counter };
+  });
 }
 
 /* ============================ TALEPLER ============================ */
@@ -547,7 +562,7 @@ function renderTalepler(){
     list = list.filter(r=>r.item.toLowerCase().includes(q)||r.no.toLowerCase().includes(q)||r.requesterName.toLowerCase().includes(q));
   }
   list = [...list].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
-  const statuses = ["Tümü","Beklemede","Onaylandı","Reddedildi","Sipariş Verildi","Teslim Alındı"];
+  const statuses = ["Tümü","Beklemede","Onaylandı","Reddedildi","Sipariş Verildi","Teslim Alındı","Fatura Onaylandı","Fatura Reddedildi"];
 
   return `
     <h1 class="page-title font-display">${mine?"Taleplerim":"Tüm Talepler"}</h1>
@@ -556,7 +571,7 @@ function renderTalepler(){
     <div class="filters-row">
       <div class="search-wrap">
         <span class="ic">🔍</span>
-        <input class="input" style="width:220px;" id="talep-search" placeholder="Ara: ürün, no, talep eden…" value="${esc(state.talepQuery)}">
+        <input class="input" id="talep-search" placeholder="Ara: ürün, no, talep eden…" value="${esc(state.talepQuery)}">
       </div>
       <select class="input" style="width:auto;" id="talep-status-filter">
         ${statuses.map(s=>`<option ${s===state.talepStatusFilter?'selected':''}>${esc(s)}</option>`).join("")}
@@ -583,15 +598,18 @@ function renderTalepler(){
 }
 
 function renderPipeline(status){
-  const rejected = status === "Reddedildi";
-  const activeIdx = rejected ? 0 : STAGES.indexOf(status);
+  const rejected = status.includes("Reddedildi");
+  // Fatura onaylandı state represents completed pipeline visually
+  const visualStatus = status === "Fatura Onaylandı" || status === "Fatura Reddedildi" ? "Teslim Alındı" : status;
+  const activeIdx = rejected && status === "Reddedildi" ? 0 : STAGES.indexOf(visualStatus);
+  
   let html = `<div class="pipeline">`;
   STAGES.forEach((s,i)=>{
     const done = !rejected && i<=activeIdx;
-    const isRejStop = rejected && i===0;
+    const isRejStop = rejected && status === "Reddedildi" && i===0;
     html += `<div class="pipe-step">
       <div class="pipe-dot ${isRejStop?'rejected':(done?'done':'')}"></div>
-      <div class="pipe-label ${done||isRejStop?'done':''}">${i===0&&rejected?'Reddedildi':esc(s)}</div>
+      <div class="pipe-label ${done||isRejStop?'done':''}">${i===0&&isRejStop?'Reddedildi':esc(s)}</div>
     </div>`;
     if(i<STAGES.length-1) html += `<div class="pipe-line ${!rejected && i<activeIdx?'done':''}" style="margin-top:4px;"></div>`;
   });
@@ -619,12 +637,16 @@ function renderRequestModalContent(r){
     ${row("Açıklama", r.note)}
     ${row("Onaylayan", r.approverName)}
     ${row("Onay tarihi", r.approvedAt ? fmtDate(r.approvedAt) : "")}
-    ${row("Onay notu", r.approveNote)}
     ${row("Tedarikçi", r.supplier)}
-    ${row("Birim fiyat", r.unitPrice ? fmtTL(r.unitPrice) : "")}
+    ${row("Kargo Firması", r.cargoInfo)}
+    ${row("Kargo Ödemesi", r.cargoPayer)}
+    ${row("Teklif Fiyatı", r.unitPrice ? fmtTL(r.unitPrice) : "")}
     ${row("Sipariş tarihi", r.orderDate ? fmtDate(r.orderDate) : "")}
-    ${row("Fatura no", r.invoiceNo)}
+    ${row("İrsaliye No", r.irsaliyeNo)}
     ${row("Teslim tarihi", r.deliveryDate ? fmtDate(r.deliveryDate) : "")}
+    ${row("Fatura No", r.invoiceNo)}
+    ${row("Gerçekleşen Fiyat", r.actualUnitPrice ? fmtTL(r.actualUnitPrice) : "")}
+    ${row("Muhasebe Durumu", r.invoiceStatus)}
   `;
 }
 
@@ -646,7 +668,7 @@ function renderOnay(){
           <p style="font-size:11px;color:var(--text-mute);margin:3px 0 0;">${esc(r.category)} · ${esc(r.requesterName)} · ${fmtDate(r.createdAt)}</p>
           ${r.note ? `<p style="font-size:12px;color:var(--text-dim);margin-top:6px;background:var(--surface2);border-radius:8px;padding:6px 10px;">${esc(r.note)}</p>` : ""}
         </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <div class="flex-wrap-gap">
           <input class="input" style="flex:1;min-width:160px;" id="onay-note-${r.id}" placeholder="Onay/red notu (opsiyonel)">
           <button class="btn btn-primary" data-action="onay-approve" data-id="${r.id}">✅ Onayla</button>
           <button class="btn btn-danger" data-action="onay-reject" data-id="${r.id}">✕ Reddet</button>
@@ -659,16 +681,18 @@ function renderOnay(){
 function handleOnayDecide(id, decision){
   const noteEl = document.getElementById("onay-note-"+id);
   const note = noteEl ? noteEl.value.trim() : "";
-  const next = {
-    ...state.data,
-    requests: state.data.requests.map(r => r.id===id ? {
-      ...r,
-      status: decision==="approve" ? "Onaylandı" : "Reddedildi",
-      approver: state.session.id, approverName: state.session.fullName,
-      approvedAt: nowISO(), approveNote: note,
-    } : r),
-  };
-  saveData(next);
+  
+  mutateData(currentData => {
+    return {
+      ...currentData,
+      requests: currentData.requests.map(r => r.id===id ? {
+        ...r,
+        status: decision==="approve" ? "Onaylandı" : "Reddedildi",
+        approver: state.session.id, approverName: state.session.fullName,
+        approvedAt: nowISO(), approveNote: note,
+      } : r),
+    };
+  });
   showToast(decision==="approve" ? "Talep onaylandı." : "Talep reddedildi.", decision==="approve"?"green":"red");
 }
 
@@ -679,15 +703,20 @@ function renderSatinAlma(){
   const inTransit = state.data.requests.filter(r=>r.status==="Sipariş Verildi");
   return `
     <h1 class="page-title font-display">Satın Alma</h1>
-    <p class="page-sub">Onaylanan talepleri siparişe dönüştürün, teslimatları işleyin.</p>
+    <p class="page-sub">Onaylanan talepleri siparişe dönüştürün ve nakliye detaylarını belirleyin.</p>
 
     <h2 style="font-size:13px;font-weight:600;margin:20px 0 10px;">🛒 Siparişe Çevrilecek (${toOrder.length})</h2>
     ${toOrder.length===0 ? `<div class="card empty">Onaylanmış, sipariş bekleyen talep yok.</div>` : toOrder.map(r=>`
       <div class="card" style="padding:16px;margin-bottom:10px;">
         <p style="font-size:13px;font-weight:500;margin:0 0 8px;"><span class="mono" style="color:var(--amber);font-size:11px;margin-right:6px;">${esc(r.no)}</span>${esc(r.item)} <span class="mono" style="color:var(--text-mute);font-size:11px;font-weight:400;">× ${esc(r.qty)} ${esc(r.unit)}</span></p>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <input class="input" style="width:180px;" id="order-supplier-${r.id}" placeholder="Tedarikçi adı">
-          <input type="number" min="0" step="any" class="input" style="width:140px;" id="order-price-${r.id}" placeholder="Birim fiyat (₺)">
+        <div class="flex-wrap-gap">
+          <input class="input" style="flex:1; min-width:120px;" id="order-supplier-${r.id}" placeholder="Tedarikçi adı">
+          <input type="number" min="0" step="any" class="input" style="width:110px;" id="order-price-${r.id}" placeholder="Teklif/Br Fiyat (₺)">
+          <input class="input" style="width:130px;" id="order-cargo-${r.id}" placeholder="Kargo Firması">
+          <select class="input" style="width:130px;" id="order-cargopayer-${r.id}">
+             <option value="Gönderici Öder">Gönderici Öder</option>
+             <option value="Alıcı Öder">Alıcı Öder</option>
+          </select>
           <button class="btn btn-primary" data-action="order-place" data-id="${r.id}">🚚 Sipariş ver</button>
         </div>
       </div>
@@ -697,65 +726,65 @@ function renderSatinAlma(){
     ${inTransit.length===0 ? `<div class="card empty">Teslim bekleyen sipariş yok.</div>` : inTransit.map(r=>`
       <div class="card" style="padding:16px;margin-bottom:10px;">
         <p style="font-size:13px;font-weight:500;margin:0 0 4px;"><span class="mono" style="color:var(--amber);font-size:11px;margin-right:6px;">${esc(r.no)}</span>${esc(r.item)} <span class="mono" style="color:var(--text-mute);font-size:11px;font-weight:400;">× ${esc(r.qty)} ${esc(r.unit)}</span></p>
-        <p style="font-size:11px;color:var(--text-mute);margin:0 0 8px;">${esc(r.supplier)} · ${fmtTL(r.unitPrice)}/birim · Sipariş: ${fmtDate(r.orderDate)}</p>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <input class="input" style="width:180px;" id="deliver-invoice-${r.id}" placeholder="Fatura no (opsiyonel)">
-          <button class="btn btn-primary" data-action="order-receive" data-id="${r.id}">✅ Teslim alındı olarak işaretle</button>
-        </div>
+        <p style="font-size:11px;color:var(--text-mute);margin:0 0 8px;">${esc(r.supplier)} · ${fmtTL(r.unitPrice)}/birim · Kargo: ${esc(r.cargoInfo)} (${esc(r.cargoPayer)})</p>
       </div>
     `).join("")}
   `;
 }
 
 function handlePlaceOrder(id){
-  const r = state.data.requests.find(x=>x.id===id);
   const supplier = document.getElementById("order-supplier-"+id).value.trim();
   const price = document.getElementById("order-price-"+id).value;
+  const cargoInfo = document.getElementById("order-cargo-"+id).value.trim();
+  const cargoPayer = document.getElementById("order-cargopayer-"+id).value;
+  
   if(!supplier || !price || Number(price)<=0){ showToast("Tedarikçi ve geçerli bir birim fiyat girin.","red"); return; }
-  const next = {
-    ...state.data,
-    requests: state.data.requests.map(x=>x.id===id ? {
-      ...x, status:"Sipariş Verildi", supplier, unitPrice:Number(price), orderDate:nowISO(), orderedBy:state.session.fullName,
-    } : x),
-  };
-  saveData(next);
-  showToast(`${r.no} için sipariş oluşturuldu.`);
+  
+  mutateData(currentData => {
+    return {
+      ...currentData,
+      requests: currentData.requests.map(x=>x.id===id ? {
+        ...x, status:"Sipariş Verildi", supplier, unitPrice:Number(price), cargoInfo, cargoPayer, orderDate:nowISO(), orderedBy:state.session.fullName,
+      } : x),
+    };
+  });
+  showToast(`Sipariş oluşturuldu.`);
 }
 
-function handleReceiveOrder(id){
-  const r = state.data.requests.find(x=>x.id===id);
-  const invoiceEl = document.getElementById("deliver-invoice-"+id);
-  const invoiceNo = invoiceEl ? invoiceEl.value.trim() : "";
-  const total = Number(r.unitPrice) * Number(r.qty);
-  let stock = [...state.data.stock];
-  const idx = stock.findIndex(s=>s.item.toLowerCase()===r.item.toLowerCase() && s.unit===r.unit);
-  if(idx>=0) stock[idx] = { ...stock[idx], qty:Number(stock[idx].qty)+Number(r.qty) };
-  else stock.push({ id:uid(), item:r.item, category:r.category, unit:r.unit, qty:Number(r.qty), minLevel:0 });
-  const tx = { id:uid(), date:nowISO(), item:r.item, qty:r.qty, unitPrice:r.unitPrice, total, requestNo:r.no, invoiceNo, type:"Satın Alma Gideri", supplier:r.supplier };
-  const next = {
-    ...state.data, stock, transactions:[tx, ...state.data.transactions],
-    requests: state.data.requests.map(x=>x.id===id ? { ...x, status:"Teslim Alındı", invoiceNo, deliveryDate:nowISO(), deliveredBy:state.session.fullName } : x),
-  };
-  saveData(next);
-  showToast(`${r.no} teslim alındı, stok güncellendi.`);
-}
-
-/* ============================ STOK ============================ */
+/* ============================ STOK / TESLİM ALMA ============================ */
 
 function renderStok(){
   const canEdit = ["admin","depo"].includes(state.session.role);
   let list = [...state.data.stock].sort((a,b)=>a.item.localeCompare(b.item,"tr"));
   if(state.stokQuery.trim()) list = list.filter(s=>s.item.toLowerCase().includes(state.stokQuery.toLowerCase()));
 
+  const inTransit = state.data.requests.filter(r=>r.status==="Sipariş Verildi");
+
   return `
-    <h1 class="page-title font-display">Stok Durumu</h1>
-    <p class="page-sub">Stok kartları, teslim alınan siparişlerle otomatik güncellenir.</p>
-    <div class="search-wrap" style="width:260px;margin-bottom:16px;">
+    <h1 class="page-title font-display">Stok & Depo Yönetimi</h1>
+    <p class="page-sub">Gelen siparişleri irsaliye ile teslim alın. Stok kartları otomatik güncellenecektir.</p>
+
+    ${canEdit ? `
+    <h2 style="font-size:13px;font-weight:600;margin:20px 0 10px;">📦 Teslim Alınacak Siparişler (${inTransit.length})</h2>
+    ${inTransit.length===0 ? `<div class="card empty" style="margin-bottom:24px;">Teslim bekleyen sipariş yok.</div>` : inTransit.map(r=>`
+      <div class="card" style="padding:16px;margin-bottom:10px;">
+        <p style="font-size:13px;font-weight:500;margin:0 0 4px;"><span class="mono" style="color:var(--amber);font-size:11px;margin-right:6px;">${esc(r.no)}</span>${esc(r.item)} <span class="mono" style="color:var(--text-mute);font-size:11px;font-weight:400;">× ${esc(r.qty)} ${esc(r.unit)}</span></p>
+        <p style="font-size:11px;color:var(--text-mute);margin:0 0 8px;">${esc(r.supplier)} · Kargo: ${esc(r.cargoInfo)}</p>
+        <div class="flex-wrap-gap">
+          <input class="input" style="width:200px;" id="deliver-irsaliye-${r.id}" placeholder="İrsaliye no girin (Zorunlu)">
+          <button class="btn btn-primary" data-action="order-receive" data-id="${r.id}">✅ Teslim alındı olarak işle</button>
+        </div>
+      </div>
+    `).join("")}
+    ` : ""}
+
+    <h2 style="font-size:13px;font-weight:600;margin:24px 0 10px;">Envanter Durumu</h2>
+    <div class="search-wrap" style="width:100%; max-width: 300px; margin-bottom:16px;">
       <span class="ic">🔍</span>
       <input class="input" id="stok-search" placeholder="Ürün ara…" value="${esc(state.stokQuery)}">
     </div>
-    ${list.length===0 ? `<div class="card empty">Stokta ürün bulunmuyor. Teslim alınan talepler otomatik olarak stok kartı oluşturur.</div>` : `
-    <div class="card" style="overflow:hidden;">
+    ${list.length===0 ? `<div class="card empty">Stokta ürün bulunmuyor.</div>` : `
+    <div class="card table-responsive">
       <table>
         <thead><tr>
           <th>Ürün</th><th>Kategori</th><th style="text-align:right;">Mevcut</th><th style="text-align:right;">Kritik Seviye</th><th>Durum</th>
@@ -785,13 +814,26 @@ function renderStok(){
   `;
 }
 
-function handleMinBlur(id){
-  const el = document.getElementById("min-"+id);
-  const val = Number(el.value);
-  if(Number.isNaN(val) || val<0) return;
-  const next = { ...state.data, stock: state.data.stock.map(s=>s.id===id?{...s,minLevel:val}:s) };
-  saveData(next);
-  showToast("Kritik seviye güncellendi.");
+function handleReceiveOrder(id){
+  const irsaliyeEl = document.getElementById("deliver-irsaliye-"+id);
+  const irsaliyeNo = irsaliyeEl ? irsaliyeEl.value.trim() : "";
+  
+  if(!irsaliyeNo){ showToast("Lütfen irsaliye numarasını girin.","red"); return; }
+  
+  mutateData(currentData => {
+    const r = currentData.requests.find(x=>x.id===id);
+    let stock = [...currentData.stock];
+    const idx = stock.findIndex(s=>s.item.toLowerCase()===r.item.toLowerCase() && s.unit===r.unit);
+    
+    if(idx>=0) stock[idx] = { ...stock[idx], qty:Number(stock[idx].qty)+Number(r.qty) };
+    else stock.push({ id:uid(), item:r.item, category:r.category, unit:r.unit, qty:Number(r.qty), minLevel:0 });
+    
+    return {
+      ...currentData, stock,
+      requests: currentData.requests.map(x=>x.id===id ? { ...x, status:"Teslim Alındı", irsaliyeNo, deliveryDate:nowISO(), deliveredBy:state.session.fullName, invoiceStatus:"Bekliyor" } : x),
+    };
+  });
+  showToast(`İrsaliye işlendi, stok güncellendi.`);
 }
 
 /* ============================ MODALS ============================ */
@@ -861,16 +903,31 @@ function handleStockAdjustSubmit(){
   const amount = document.getElementById("adjust-amount").value;
   if(!amount || Number(amount)<=0){ showToast("Geçerli bir miktar girin.","red"); return; }
   const delta = m.dir==="in" ? Number(amount) : -Number(amount);
-  const next = { ...state.data, stock: state.data.stock.map(s=>s.id===m.id?{...s,qty:Math.max(0,Number(s.qty)+delta)}:s) };
+  
+  mutateData(currentData => {
+    return { ...currentData, stock: currentData.stock.map(s=>s.id===m.id?{...s,qty:Math.max(0,Number(s.qty)+delta)}:s) };
+  });
   state.modal = null;
-  saveData(next);
   showToast(m.dir==="in" ? "Stok girişi kaydedildi." : "Stok çıkışı kaydedildi.");
+}
+
+function handleMinBlur(id){
+  const el = document.getElementById("min-"+id);
+  const val = Number(el.value);
+  if(Number.isNaN(val) || val<0) return;
+  mutateData(currentData => {
+    return { ...currentData, stock: currentData.stock.map(s=>s.id===id?{...s,minLevel:val}:s) };
+  });
+  showToast("Kritik seviye güncellendi.");
 }
 
 /* ============================ MUHASEBE ============================ */
 
 function renderMuhasebe(){
   const { transactions, requests } = state.data;
+  
+  const pendingInvoices = requests.filter(r => r.status === "Teslim Alındı" && r.invoiceStatus === "Bekliyor");
+  
   const total = transactions.reduce((s,t)=>s+(Number(t.total)||0),0);
   const byCategory = {};
   transactions.forEach(t=>{
@@ -884,16 +941,39 @@ function renderMuhasebe(){
   const sorted = [...transactions].sort((a,b)=>new Date(b.date)-new Date(a.date));
 
   return `
-    <h1 class="page-title font-display">Muhasebe & Raporlar</h1>
-    <p class="page-sub">Teslim alınan siparişlerden otomatik oluşan satın alma giderleri.</p>
+    <h1 class="page-title font-display">Muhasebe & Fatura Onayı</h1>
+    <p class="page-sub">Depoya giren ürünlerin faturalarını teklif fiyatlarıyla karşılaştırıp sisteme işleyin.</p>
 
-    <div class="stat-grid" style="grid-template-columns:repeat(3,1fr);">
+    <h2 style="font-size:13px;font-weight:600;margin:20px 0 10px;">🧾 Fatura Onayı Bekleyen Teslimatlar (${pendingInvoices.length})</h2>
+    ${pendingInvoices.length===0 ? `<div class="card empty" style="margin-bottom:24px;">Onay bekleyen fatura bulunmuyor.</div>` : pendingInvoices.map(r=>`
+      <div class="card" style="padding:16px;margin-bottom:10px;">
+        <div style="display:flex; justify-content:space-between; flex-wrap:wrap; gap:10px; margin-bottom:8px;">
+          <div>
+            <p style="font-size:13px;font-weight:500;margin:0 0 4px;"><span class="mono" style="color:var(--amber);font-size:11px;margin-right:6px;">${esc(r.no)}</span>${esc(r.item)} <span class="mono" style="color:var(--text-mute);font-size:11px;font-weight:400;">× ${esc(r.qty)} ${esc(r.unit)}</span></p>
+            <p style="font-size:11px;color:var(--text-mute);margin:0;">Tedarikçi: ${esc(r.supplier)} · İrsaliye: ${esc(r.irsaliyeNo)}</p>
+          </div>
+          <div style="background:rgba(232,163,61,.1); padding:6px 12px; border-radius:6px; border:1px solid rgba(232,163,61,.2);">
+            <span style="font-size:10px; color:var(--text-mute); display:block;">Sistemdeki Teklif Fiyatı (Birim)</span>
+            <span class="mono" style="font-size:14px; font-weight:600; color:var(--amber);">${fmtTL(r.unitPrice)}</span>
+          </div>
+        </div>
+        
+        <div class="flex-wrap-gap">
+          <input class="input" style="width:160px;" id="acc-invoice-${r.id}" placeholder="Fatura No (Zorunlu)">
+          <input type="number" min="0" step="any" class="input" style="width:160px;" id="acc-price-${r.id}" value="${r.unitPrice}" placeholder="Gerçekleşen Fiyat (₺)">
+          <button class="btn btn-primary" data-action="invoice-approve" data-id="${r.id}">✅ Kabul Et & İşle</button>
+          <button class="btn btn-danger" data-action="invoice-reject" data-id="${r.id}">✕ Reddet</button>
+        </div>
+      </div>
+    `).join("")}
+
+    <div class="stat-grid" style="grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); margin-top:30px;">
       ${statCard("📈","Toplam Gider",fmtTL(total),"amber")}
-      ${statCard("📋","İşlem Sayısı",transactions.length,"slate")}
+      ${statCard("📋","İşlenmiş Fatura",transactions.length,"slate")}
       ${statCard("🚚","Tedarikçi Sayısı",new Set(transactions.map(t=>t.supplier).filter(Boolean)).size,"teal")}
     </div>
 
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px;">
+    <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(300px, 1fr));gap:16px;margin-bottom:20px;">
       <div class="card" style="padding:16px;">
         <h2 style="font-size:13px;font-weight:600;margin:0 0 12px;">Kategoriye Göre Harcama</h2>
         ${catEntries.length===0 ? `<p class="empty">Henüz veri yok.</p>` : catEntries.map(([cat,amt])=>`
@@ -915,12 +995,11 @@ function renderMuhasebe(){
       </div>
     </div>
 
-    <div class="card" style="overflow:hidden;">
-      <div style="padding:12px 16px;border-bottom:1px solid #1D2430;"><h2 style="font-size:13px;font-weight:600;">İşlem Kayıtları</h2></div>
+    <div class="card table-responsive">
+      <div style="padding:12px 16px;border-bottom:1px solid #1D2430;"><h2 style="font-size:13px;font-weight:600;">İşlem Kayıtları (Giderler)</h2></div>
       ${sorted.length===0 ? `<p class="empty">Henüz gider kaydı yok.</p>` : `
-      <div style="overflow-x:auto;">
       <table>
-        <thead><tr><th>Tarih</th><th>Talep No</th><th>Ürün</th><th>Tedarikçi</th><th>Fatura No</th><th style="text-align:right;">Tutar</th></tr></thead>
+        <thead><tr><th>Tarih</th><th>Talep No</th><th>Ürün</th><th>Tedarikçi</th><th>Fatura No</th><th style="text-align:right;">B.Fiyat</th><th style="text-align:right;">Toplam Tutar</th></tr></thead>
         <tbody>
           ${sorted.map(t=>`<tr>
             <td style="color:var(--text-mute);font-size:12px;">${fmtDate(t.date)}</td>
@@ -928,25 +1007,73 @@ function renderMuhasebe(){
             <td>${esc(t.item)} <span class="mono" style="color:var(--text-mute);font-size:11px;">×${esc(t.qty)}</span></td>
             <td style="color:var(--text-dim);">${esc(t.supplier||"—")}</td>
             <td class="mono" style="font-size:11px;color:var(--text-dim);">${esc(t.invoiceNo||"—")}</td>
+            <td style="text-align:right;" class="mono">${fmtTL(t.unitPrice)}</td>
             <td style="text-align:right;" class="mono">${fmtTL(t.total)}</td>
           </tr>`).join("")}
         </tbody>
       </table>
-      </div>`}
+      `}
     </div>
   `;
+}
+
+function handleInvoiceApprove(id, isApprove){
+  const r = state.data.requests.find(x=>x.id===id);
+  
+  if (!isApprove) {
+     mutateData(currentData => {
+       return {
+         ...currentData,
+         requests: currentData.requests.map(x=>x.id===id ? { ...x, status: "Fatura Reddedildi", invoiceStatus: "Reddedildi" } : x),
+       };
+     });
+     showToast("Fatura reddedildi. Satın alma birimi ile görüşün.", "red");
+     return;
+  }
+  
+  const invEl = document.getElementById("acc-invoice-"+id);
+  const priceEl = document.getElementById("acc-price-"+id);
+  const invoiceNo = invEl ? invEl.value.trim() : "";
+  const actualPrice = priceEl ? Number(priceEl.value) : 0;
+  
+  if(!invoiceNo || actualPrice <= 0){ showToast("Fatura numarası ve geçerli bir fiyat girin.", "red"); return; }
+  
+  // Teklif ile gerçekleşen fiyat farkı kontrolü
+  if(actualPrice !== r.unitPrice) {
+     if(!confirm(`DİKKAT: Teklif fiyatı (${r.unitPrice} ₺) ile Fatura fiyatı (${actualPrice} ₺) uyuşmuyor. Yine de onaylamak istiyor musunuz?`)){
+         return;
+     }
+  }
+
+  mutateData(currentData => {
+    const total = actualPrice * Number(r.qty);
+    const tx = { id:uid(), date:nowISO(), item:r.item, qty:r.qty, unitPrice:actualPrice, total, requestNo:r.no, invoiceNo, type:"Satın Alma Gideri", supplier:r.supplier };
+    
+    return {
+      ...currentData,
+      transactions:[tx, ...currentData.transactions],
+      requests: currentData.requests.map(x=>x.id===id ? { 
+        ...x, 
+        status: "Fatura Onaylandı", 
+        invoiceStatus: "Onaylandı", 
+        invoiceNo, 
+        actualUnitPrice: actualPrice 
+      } : x),
+    };
+  });
+  showToast("Fatura sisteme işlendi.", "green");
 }
 
 /* ============================ KULLANICILAR ============================ */
 
 function renderKullanicilar(){
   return `
-    <div style="display:flex;justify-content:space-between;align-items:center;">
+    <div style="display:flex;justify-content:space-between;align-items:center; flex-wrap:wrap; gap:10px;">
       <h1 class="page-title font-display">Kullanıcılar & Yetkiler</h1>
       <button class="btn btn-primary" data-action="user-new">➕ Yeni kullanıcı</button>
     </div>
     <p class="page-sub">🛡 Yalnızca yöneticiler kullanıcı ekleyebilir, rol atayabilir ve şifre belirleyebilir.</p>
-    <div class="card" style="overflow:hidden;">
+    <div class="card table-responsive">
       <table>
         <thead><tr><th>Ad Soyad</th><th>Kullanıcı Adı</th><th>Rol</th><th>Durum</th><th style="text-align:right;">İşlem</th></tr></thead>
         <tbody>
@@ -1034,6 +1161,8 @@ document.addEventListener("click", (e)=>{
   else if(action === "onay-reject"){ handleOnayDecide(id,"reject"); }
   else if(action === "order-place"){ handlePlaceOrder(id); }
   else if(action === "order-receive"){ handleReceiveOrder(id); }
+  else if(action === "invoice-approve"){ handleInvoiceApprove(id, true); }
+  else if(action === "invoice-reject"){ handleInvoiceApprove(id, false); }
   else if(action === "stock-adjust-open"){ state.modal = { type:"stock-adjust", id, dir:t.dataset.dir }; render(); }
   else if(action === "stock-adjust-submit"){ handleStockAdjustSubmit(); }
   else if(action === "user-new"){ state.modal = { type:"user-form", editingId:null }; render(); }
@@ -1075,56 +1204,37 @@ const SUPABASE_KEY = "sb_publishable_ZpEPd2NCey2LAYz_lE_m1w_j0I8PWz8";
 
 function startSupabase() {
   const script = document.createElement("script");
-
   script.src = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2";
 
   script.onload = async function () {
-
     const db = window.supabase.createClient(
       SUPABASE_URL,
       SUPABASE_KEY
     );
 
     window.storage = {
-
       async get(key) {
-
         const { data, error } = await db
           .from("app_storage")
           .select("value")
           .eq("key", key)
           .maybeSingle();
-
         if (error) throw error;
-
         if (!data) return null;
-
-        return {
-          value: data.value
-        };
+        return { value: data.value };
       },
 
       async set(key, value) {
-
         const { error } = await db
           .from("app_storage")
           .upsert(
-            {
-              key: key,
-              value: value,
-              updated_at: new Date().toISOString()
-            },
-            {
-              onConflict: "key"
-            }
+            { key: key, value: value, updated_at: new Date().toISOString() },
+            { onConflict: "key" }
           );
-
         if (error) throw error;
-
         return true;
       }
     };
-
     loadAll();
   };
 
