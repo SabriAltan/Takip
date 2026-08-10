@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Kurumsal ERP · Talep, Satın Alma, Stok, Cari & Muhasebe</title>
+<title>Kurumsal ERP · Talep, Satın Alma, Stok, Cari & Ön Muhasebe</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
 
@@ -94,7 +94,7 @@
   tr:hover td{ background:rgba(255,255,255,.01); }
 
   .modal-overlay{ position:fixed; inset:0; background:rgba(0,0,0,.6); display:flex; align-items:center; justify-content:center; z-index:50; padding:16px; }
-  .modal{ width:100%; max-width:440px; padding:20px; max-height:85vh; overflow-y:auto; }
+  .modal{ width:100%; max-width:480px; padding:20px; max-height:85vh; overflow-y:auto; }
   .modal-row{ display:flex; justify-content:space-between; gap:16px; padding:6px 0; border-top:1px solid #1D2430; }
   .modal-row:first-child{ border-top:none; }
   .modal-row .k{ font-size:12px; color:var(--text-mute); flex-shrink:0; }
@@ -159,15 +159,15 @@ function esc(s){
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 function statusTone(status){
-  if (status.includes("Reddedildi") || status.includes("İade") || status.includes("Uyuşmuyor")) return "red";
-  return { "Beklemede":"blue","Onaylandı":"teal","Sipariş Verildi":"amber","Teslim Alındı":"green","Fatura Onaylandı":"slate" }[status] || "slate";
+  if (status.includes("Reddedildi") || status.includes("İade") || status.includes("Uyuşmuyor") || status.includes("İptal")) return "red";
+  return { "Beklemede":"blue","Onaylandı":"teal","Sipariş Verildi":"amber","Teslim Alındı":"green","Fatura Onaylandı":"slate","Ödendi":"green","Ödeme Bekliyor":"amber" }[status] || "slate";
 }
 function badge(text, tone){ return `<span class="badge tone-${tone}">${esc(text)}</span>`; }
 
 function seedUsers(){
   return [{ id:uid(), username:"admin", password:"admin123", fullName:"Sistem Yöneticisi", role:"admin", active:true, createdAt:nowISO() }];
 }
-function seedData(){ return { requests:[], stock:[], transactions:[], suppliers:[], fieldLogs:[], reqCounter:0 }; }
+function seedData(){ return { requests:[], stock:[], transactions:[], suppliers:[], fieldLogs:[], payments:[], reqCounter:0 }; }
 
 /* ============================ STATE ============================ */
 
@@ -196,6 +196,7 @@ async function loadAll(){
     if(!d){ d = seedData(); try{ await window.storage.set("workflow-data", JSON.stringify(d), true); }catch(e){} }
     if(!d.suppliers) d.suppliers = [];
     if(!d.fieldLogs) d.fieldLogs = [];
+    if(!d.payments) d.payments = [];
     state.data = d;
   }catch(e){
     state.users = seedUsers();
@@ -217,6 +218,7 @@ async function mutateData(mutationFn){
     let current = r2 ? JSON.parse(r2.value) : seedData();
     if(!current.suppliers) current.suppliers = [];
     if(!current.fieldLogs) current.fieldLogs = [];
+    if(!current.payments) current.payments = [];
     let next = mutationFn(current);
     await window.storage.set("workflow-data", JSON.stringify(next), true);
     state.data = next;
@@ -324,7 +326,7 @@ const NAV = [
   { key:"satinalma", label:"Satın Alma", icon:"🛒", roles:["admin","satinalma"] },
   { key:"cariler", label:"Cari Firmalar", icon:"🏢", roles:["admin","satinalma","muhasebe"] },
   { key:"stok", label:"Stok & Saha", icon:"🏬", roles:["admin","depo","satinalma","onaylayan"] },
-  { key:"muhasebe", label:"Muhasebe & Fatura", icon:"📈", roles:["admin","muhasebe"] },
+  { key:"muhasebe", label:"Ön Muhasebe & Fatura", icon:"📈", roles:["admin","muhasebe"] },
   { key:"kullanicilar", label:"Kullanıcılar", icon:"👥", roles:["admin"] },
   { key:"ayarlar", label:"Sistem & Temizlik", icon:"⚙️", roles:["admin"] },
 ];
@@ -352,7 +354,7 @@ function renderShell(){
         <div class="logo-box">📦</div>
         <div>
           <div class="sidebar-title font-display">Kurumsal ERP</div>
-          <div class="sidebar-sub">Profesyonel Modül</div>
+          <div class="sidebar-sub">Ön Muhasebe Modülü</div>
         </div>
       </div>
       <nav class="nav">
@@ -381,33 +383,34 @@ function renderShell(){
 /* ============================ DASHBOARD ============================ */
 
 function renderDashboard(){
-  const { requests, stock, transactions, suppliers, fieldLogs } = state.data;
+  const { requests, stock, transactions, suppliers, payments } = state.data;
   const pending = requests.filter(r=>r.status==="Beklemede").length;
   const approved = requests.filter(r=>r.status==="Onaylandı").length;
   const ordered = requests.filter(r=>r.status==="Sipariş Verildi").length;
   const totalSpend = transactions.reduce((s,t)=>s+(Number(t.total)||0),0);
+  const pendingPayments = payments.filter(p=>p.status==="Ödeme Bekliyor").reduce((s,p)=>s+(Number(p.amount)||0),0);
 
   return `
     <h1 class="page-title font-display">Hoş Geldiniz, ${esc(state.session.fullName.split(" ")[0])}</h1>
-    <p class="page-sub">Genel ERP göstergeleri ve istatistikler.</p>
+    <p class="page-sub">Genel ERP ve ön muhasebe göstergeleri.</p>
 
     <div class="stat-grid">
       <div class="card stat-card"><div class="stat-icon" style="background:rgba(76,141,255,.1);">⏱</div><div><div class="stat-label">Onay Bekleyen</div><div class="stat-value mono">${pending}</div></div></div>
       <div class="card stat-card"><div class="stat-icon" style="background:rgba(45,212,166,.1);">✅</div><div><div class="stat-label">Onaylandı</div><div class="stat-value mono">${approved}</div></div></div>
-      <div class="card stat-card"><div class="stat-icon" style="background:rgba(232,163,61,.1);">🚚</div><div><div class="stat-label">Siparişte</div><div class="stat-value mono">${ordered}</div></div></div>
-      <div class="card stat-card"><div class="stat-icon" style="background:rgba(52,211,153,.1);">📈</div><div><div class="stat-label">Toplam Harcama</div><div class="stat-value mono" style="font-size:16px;">${fmtTL(totalSpend)}</div></div></div>
+      <div class="card stat-card"><div class="stat-icon" style="background:rgba(232,163,61,.1);">📈</div><div><div class="stat-label">Toplam Harcama</div><div class="stat-value mono" style="font-size:16px;">${fmtTL(totalSpend)}</div></div></div>
+      <div class="card stat-card"><div class="stat-icon" style="background:rgba(240,85,79,.1);">💳</div><div><div class="stat-label">Ödenecek Tutar</div><div class="stat-value mono" style="font-size:16px;color:var(--amber);">${fmtTL(pendingPayments)}</div></div></div>
     </div>
 
     <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(300px, 1fr));gap:16px;">
       <div class="card" style="padding:16px;">
-        <h2 style="font-size:13px;font-weight:600;margin-bottom:12px;">Kayıtlı Cari Firma Sayısı</h2>
+        <h2 style="font-size:13px;font-weight:600;margin-bottom:12px;">Cari Tedarikçi Sayısı</h2>
         <div class="mono" style="font-size:24px; font-weight:700; color:var(--amber); margin-bottom:8px;">${suppliers.length} Firma</div>
         <p style="font-size:12px; color:var(--text-mute);">Vergi dairesi ve vergi no doğrulamalı entegre cari kartları.</p>
       </div>
       <div class="card" style="padding:16px;">
-        <h2 style="font-size:13px;font-weight:600;margin-bottom:12px;">Sahaya Çıkan Malzemeler</h2>
-        <div class="mono" style="font-size:24px; font-weight:700; color:var(--teal); margin-bottom:8px;">${fieldLogs.length} Çıkış Kaydı</div>
-        <p style="font-size:12px; color:var(--text-mute);">Personel bazlı şantiye ve saha sevk raporlamaları aktif.</p>
+        <h2 style="font-size:13px;font-weight:600;margin-bottom:12px;">Aktif Ödeme Kalemleri</h2>
+        <div class="mono" style="font-size:24px; font-weight:700; color:var(--teal); margin-bottom:8px;">${payments.filter(p=>p.status==="Ödeme Bekliyor").length} Bekleyen Ödeme</div>
+        <p style="font-size:12px; color:var(--text-mute);">Banka havalesi ve çek entegre ödeme talimatları aktif.</p>
       </div>
     </div>
   `;
@@ -531,7 +534,7 @@ function renderTalepler(){
     <div class="filters-row">
       <div class="search-wrap"><span class="ic">🔍</span><input class="input" id="talep-search" placeholder="Ara…" value="${esc(state.talepQuery)}"></div>
       <select class="input" style="width:auto;" id="talep-status-filter">
-        ${["Tümü","Beklemede","Onaylandı","Reddedildi","Sipariş Verildi","Teslim Alındı","İade Edildi","Fatura Onaylandı","Fiyat Uyuşmuyor"].map(s=>`<option ${s===state.talepStatusFilter?'selected':''}>${esc(s)}</option>`).join("")}
+        ${["Tümü","Beklemede","Onaylandı","Reddedildi","Sipariş Verildi","Teslim Alındı","İade Edildi","Fatura Onaylandı","Fiyat Uyuşmuyor","Fatura Reddedildi / İptal"].map(s=>`<option ${s===state.talepStatusFilter?'selected':''}>${esc(s)}</option>`).join("")}
       </select>
     </div>
 
@@ -570,8 +573,9 @@ function renderRequestModalContent(r){
       ${row("Tedarikçi Cari", r.supplier)}
       ${row("Teklif Birim Fiyat", r.unitPrice ? fmtTL(r.unitPrice) : "")}
       ${row("İrsaliye No", r.irsaliyeNo)}
+      ${row("Fatura No", r.invoiceNo)}
       ${row("Fatura Tutarı (KDV Dahil)", r.invoiceTotal ? fmtTL(r.invoiceTotal) : "")}
-      ${row("İade Nedeni", r.returnReason)}
+      ${row("İade / Red Nedeni", r.returnReason || r.cancelReason)}
     </div>
   `;
 }
@@ -777,53 +781,100 @@ function handleReturnOrder(id){
   showToast("Ürün iade edildi olarak işaretlendi.", "red");
 }
 
-/* ============================ MUHASEBE & FATURA KONTROLÜ ============================ */
+/* ============================ ÖN MUHASEBE & FATURA & ÖDEME LİSTESİ ============================ */
 
 function renderMuhasebe(){
-  const { requests, transactions } = state.data;
-  const deliveredRequests = requests.filter(r=>r.status==="Teslim Alındı" || r.status==="Fatura Onaylandı" || r.status==="Fiyat Uyuşmuyor");
+  const { requests, transactions, payments } = state.data;
+  // Mükerrer veri girişini önlemek için yalnızca "Teslim Alındı" durumunda olanlar faturalandırılabilir.
+  // Fatura Onaylandı, Fiyat Uyuşmuyor veya İptal edilenler listeden düşer.
+  const deliveredRequests = requests.filter(r=>r.status==="Teslim Alındı");
   const totalSpend = transactions.reduce((s,t)=>s+(Number(t.total)||0),0);
+  const pendingPayments = payments.filter(p=>p.status==="Ödeme Bekliyor");
+  const completedPayments = payments.filter(p=>p.status==="Ödendi");
 
   return `
-    <h1 class="page-title font-display">Muhasebe, Fatura & KDV Kontrolü</h1>
-    <p class="page-sub">Teslim alınan siparişlerin faturalarını işleyin, KDV ekleyin ve teklif fiyatları ile karşılaştırın.</p>
+    <h1 class="page-title font-display">Ön Muhasebe, Fatura & Ödeme Yönetimi</h1>
+    <p class="page-sub">Faturaları işleyin, KDV kontrolü yapın ve tedarikçi ödeme emirlerini yönetin.</p>
 
-    <div class="card stat-card" style="margin-bottom:20px;max-width:320px;">
-      <div><div class="stat-label">Toplam Onaylı Gider</div><div class="stat-value mono">${fmtTL(totalSpend)}</div></div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-bottom:20px;">
+      <div class="card stat-card"><div><div class="stat-label">Toplam Onaylı Gider</div><div class="stat-value mono">${fmtTL(totalSpend)}</div></div></div>
+      <div class="card stat-card"><div><div class="stat-label">Ödenecek Bekleyen</div><div class="stat-value mono" style="color:var(--amber);">${fmtTL(pendingPayments.reduce((s,p)=>s+Number(p.amount),0))}</div></div></div>
     </div>
 
-    <h2 style="font-size:13px;font-weight:600;margin:20px 0 10px;">Faturalandırılacak Teslimatlar</h2>
-    ${deliveredRequests.length===0 ? `<div class="card empty" style="margin-bottom:24px;">Faturalandırılacak teslimat bulunmuyor.</div>` : deliveredRequests.map(r=>`
+    <h2 style="font-size:13px;font-weight:600;margin:20px 0 10px;">📋 Faturalandırılacak Teslimatlar (Mükerrer Giriş Korumalı)</h2>
+    ${deliveredRequests.length===0 ? `<div class="card empty" style="margin-bottom:24px;">Faturalandırılacak yeni teslimat bulunmuyor.</div>` : deliveredRequests.map(r=>`
       <div class="card" style="padding:16px;margin-bottom:10px;">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px;margin-bottom:8px;">
           <div>
             <p style="font-size:13px;font-weight:500;margin:0;"><span class="mono" style="color:var(--amber);font-size:11px;margin-right:6px;">${esc(r.no)}</span>${esc(r.item)} × ${esc(r.qty)} ${esc(r.unit)}</p>
-            <p style="font-size:11px;color:var(--text-mute);margin:2px 0 0;">Cari: ${esc(r.supplier)} | Teklif Birim Fiyat: ${fmtTL(r.unitPrice)} | Beklenen Tutar: ${fmtTL(Number(r.qty)*Number(r.unitPrice))}</p>
+            <p style="font-size:11px;color:var(--text-mute);margin:2px 0 0;">Cari: ${esc(r.supplier)} | İrsaliye: ${esc(r.irsaliyeNo)} | Teklif Birim Fiyat: ${fmtTL(r.unitPrice)} | Beklenen Tutar: ${fmtTL(Number(r.qty)*Number(r.unitPrice))}</p>
           </div>
           <div>${badge(r.status, statusTone(r.status))}</div>
         </div>
         <div class="flex-wrap-gap">
-          <input type="number" min="0" step="any" class="input" style="width:160px;" id="inv-total-${r.id}" placeholder="Fatura Toplam (₺)">
+          <input class="input" style="width:140px;" id="inv-no-${r.id}" placeholder="Fatura No *">
+          <input type="number" min="0" step="any" class="input" style="width:140px;" id="inv-total-${r.id}" placeholder="Fatura Toplam (₺)">
           <select class="input" style="width:110px;" id="inv-kdv-${r.id}">
             <option value="20" selected>%20 KDV</option>
             <option value="10">%10 KDV</option>
             <option value="1">%1 KDV</option>
             <option value="0">%0 KDV</option>
           </select>
-          <button class="btn btn-primary" data-action="invoice-process" data-id="${r.id}">🔍 Fatura İşle & Kontrol Et</button>
+          <button class="btn btn-primary" data-action="invoice-process" data-id="${r.id}">🔍 Fatura İşle</button>
+          <button class="btn btn-danger" data-action="invoice-reject" data-id="${r.id}">✕ Reddet / İptal</button>
         </div>
       </div>
     `).join("")}
 
-    <h2 style="font-size:13px;font-weight:600;margin:24px 0 10px;">Muhasebe Finansal Geçmişi</h2>
+    <h2 style="font-size:13px;font-weight:600;margin:24px 0 10px;">💳 Tedarikçi Ödeme Listesi (Bekleyen Ödemeler)</h2>
+    <div class="card table-responsive" style="margin-bottom:24px;">
+      <table>
+        <thead><tr><th>Tarih</th><th>Talep / Fatura No</th><th>Cari Firma</th><th>Ödeme Durumu</th><th style="text-align:right;">Tutar</th><th style="text-align:right;">İşlem</th></tr></thead>
+        <tbody>
+          ${pendingPayments.length===0 ? `<tr><td colspan="6" class="empty">Ödeme bekleyen kayıt bulunmuyor.</td></tr>` : pendingPayments.map(p=>`
+            <tr>
+              <td style="color:var(--text-mute);">${fmtDate(p.date)}</td>
+              <td class="mono" style="color:var(--amber);">${esc(p.requestNo)} / ${esc(p.invoiceNo||"—")}</td>
+              <td><strong>${esc(p.supplier)}</strong></td>
+              <td>${badge(p.status, statusTone(p.status))}</td>
+              <td style="text-align:right;" class="mono"><strong>${fmtTL(p.amount)}</strong></td>
+              <td style="text-align:right;">
+                <button class="btn btn-primary" style="padding:5px 10px;font-size:11px;" data-action="pay-modal" data-id="${p.id}">💵 Öde</button>
+              </td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
+
+    <h2 style="font-size:13px;font-weight:600;margin:24px 0 10px;">✅ Tamamlanan Ödemeler & Arşiv</h2>
+    <div class="card table-responsive" style="margin-bottom:24px;">
+      <table>
+        <thead><tr><th>Ödeme Tarihi</th><th>Fatura No</th><th>Cari Firma</th><th>Ödeme Yöntemi / Detay</th><th style="text-align:right;">Ödenen Tutar</th></tr></thead>
+        <tbody>
+          ${completedPayments.length===0 ? `<tr><td colspan="5" class="empty">Tamamlanan ödeme kaydı yok.</td></tr>` : completedPayments.map(p=>`
+            <tr>
+              <td style="color:var(--text-mute);">${fmtDate(p.paidDate||p.date)}</td>
+              <td class="mono" style="color:var(--amber);">${esc(p.invoiceNo||"—")}</td>
+              <td><strong>${esc(p.supplier)}</strong></td>
+              <td><span class="badge tone-green">${esc(p.method)}</span> <span style="font-size:11px;color:var(--text-mute);">${esc(p.methodDetails||"")}</span></td>
+              <td style="text-align:right;" class="mono">${fmtTL(p.amount)}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
+
+    <h2 style="font-size:13px;font-weight:600;margin:24px 0 10px;">Muhasebe Finansal İşlem Geçmişi</h2>
     <div class="card table-responsive">
       <table>
-        <thead><tr><th>Tarih</th><th>Talep No</th><th>Ürün</th><th>Cari Firma</th><th>KDV</th><th style="text-align:right;">Toplam Tutar</th></tr></thead>
+        <thead><tr><th>Tarih</th><th>Talep No</th><th>Fatura No</th><th>Ürün</th><th>Cari Firma</th><th>KDV</th><th style="text-align:right;">Toplam Tutar</th></tr></thead>
         <tbody>
-          ${transactions.length===0 ? `<tr><td colspan="6" class="empty">Henüz muhasebe kaydı yok.</td></tr>` : transactions.map(t=>`
+          ${transactions.length===0 ? `<tr><td colspan="7" class="empty">Henüz muhasebe kaydı yok.</td></tr>` : transactions.map(t=>`
             <tr>
               <td style="color:var(--text-mute);">${fmtDate(t.date)}</td>
               <td class="mono" style="color:var(--amber);">${esc(t.requestNo)}</td>
+              <td class="mono">${esc(t.invoiceNo||"—")}</td>
               <td>${esc(t.item)} × ${esc(t.qty)}</td>
               <td>${esc(t.supplier)}</td>
               <td class="mono">%${esc(t.kdv||20)}</td>
@@ -837,8 +888,11 @@ function renderMuhasebe(){
 }
 
 function handleProcessInvoice(id){
+  const invoiceNo = document.getElementById("inv-no-"+id).value.trim();
   const totalInput = document.getElementById("inv-total-"+id).value;
   const kdvRate = document.getElementById("inv-kdv-"+id).value;
+
+  if(!invoiceNo){ showToast("Fatura Numarası zorunludur.","red"); return; }
   if(!totalInput || Number(totalInput)<=0){ showToast("Geçerli bir fatura tutarı girin.","red"); return; }
 
   const invoiceTotal = Number(totalInput);
@@ -848,19 +902,24 @@ function handleProcessInvoice(id){
     const expectedBase = Number(r.qty) * Number(r.unitPrice);
     const expectedWithKdv = expectedBase * (1 + Number(kdvRate)/100);
     
-    // Tolerans payı %2 (küsurat farkları için)
     const diff = Math.abs(invoiceTotal - expectedWithKdv);
     const isMatch = diff <= (expectedWithKdv * 0.02);
 
     let newStatus = isMatch ? "Fatura Onaylandı" : "Fiyat Uyuşmuyor";
     let transactions = [...currentData.transactions];
+    let payments = [...(currentData.payments||[])];
 
     if(isMatch){
       transactions.push({
-        id: uid(), requestNo: r.no, item: r.item, qty: r.qty,
+        id: uid(), requestNo: r.no, invoiceNo, item: r.item, qty: r.qty,
         supplier: r.supplier, kdv: kdvRate, total: invoiceTotal, date: nowISO()
       });
-      showToast("Fatura onaylandı ve muhasebeye işlendi.");
+      // Ödeme listesine otomatik ekle
+      payments.push({
+        id: uid(), requestNo: r.no, invoiceNo, supplier: r.supplier,
+        amount: invoiceTotal, status: "Ödeme Bekliyor", date: nowISO()
+      });
+      showToast("Fatura onaylandı, muhasebeye işlendi ve ödeme listesine eklendi.");
     } else {
       showToast(`Uyarı: Fatura tutarı (${fmtTL(invoiceTotal)}), teklif hesaplamasıyla (${fmtTL(expectedWithKdv)}) uyuşmuyor!`, "red");
     }
@@ -868,9 +927,97 @@ function handleProcessInvoice(id){
     return {
       ...currentData,
       transactions,
-      requests: currentData.requests.map(x=>x.id===id ? { ...x, status: newStatus, invoiceTotal } : x)
+      payments,
+      requests: currentData.requests.map(x=>x.id===id ? { ...x, status: newStatus, invoiceNo, invoiceTotal } : x)
     };
   });
+}
+
+function handleRejectInvoice(id){
+  const reason = prompt("Fatura red / iptal gerekçesini giriniz:");
+  if(reason === null) return;
+  if(!reason.trim()){ showToast("İptal gerekçesi boş bırakılamaz.", "red"); return; }
+
+  mutateData(currentData => ({
+    ...currentData,
+    requests: currentData.requests.map(x=>x.id===id ? { ...x, status: "Fatura Reddedildi / İptal", cancelReason: reason } : x)
+  }));
+  showToast("Fatura reddedildi ve iptal edildi.", "red");
+}
+
+function handleExecutePayment(paymentId){
+  const method = document.getElementById("pay-method").value;
+  const details = document.getElementById("pay-details").value.trim();
+
+  if(!details){ showToast("Lütfen ödeme detayını (Hesap No / İBAN veya Çek No) giriniz.", "red"); return; }
+
+  let targetPayment = null;
+
+  mutateData(currentData => {
+    let payments = (currentData.payments||[]).map(p => {
+      if(p.id === paymentId){
+        targetPayment = { ...p, method, methodDetails: details, status: "Ödendi", paidDate: nowISO() };
+        return targetPayment;
+      }
+      return p;
+    });
+    return { ...currentData, payments };
+  });
+
+  if(targetPayment){
+    generatePaymentReceiptPDF(targetPayment);
+  }
+  state.modal = null;
+  showToast("Ödeme gerçekleştirildi ve resmi evrak oluşturuldu.");
+}
+
+function generatePaymentReceiptPDF(p){
+  const w = window.open("", "_blank");
+  if(!w) { showToast("Tarayıcı açılır pencereyi engelledi.", "amber"); return; }
+  w.document.write(`
+    <!DOCTYPE html>
+    <html lang="tr">
+    <head>
+      <meta charset="UTF-8">
+      <title>Ödeme Talimatı / Dekont - ${p.invoiceNo || p.requestNo}</title>
+      <style>
+        body{ font-family: 'Helvetica Neue', Arial, sans-serif; padding: 40px; color: #111; line-height: 1.6; }
+        .header{ display: flex; justify-content: space-between; border-bottom: 2px solid #333; padding-bottom: 20px; margin-bottom: 30px; }
+        .title{ font-size: 22px; font-weight: bold; text-transform: uppercase; }
+        .box{ background: #f9f9f9; border: 1px solid #ddd; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
+        .row{ display: flex; justify-content: space-between; margin-bottom: 10px; border-bottom: 1px dashed #eee; padding-bottom: 6px; }
+        .label{ font-weight: bold; color: #555; }
+        .amount{ font-size: 20px; font-weight: bold; color: #0d6efd; text-align: right; margin-top: 20px; }
+        .sign{ margin-top: 60px; display: flex; justify-content: space-between; }
+        .sign-box{ text-align: center; width: 200px; border-top: 1px solid #333; padding-top: 10px; }
+      </style>
+    </head>
+    <body>
+      <div class="header">
+        <div>
+          <div class="title">Kurumsal ERP - Resmi Ödeme Emri</div>
+          <div>Tarih: ${fmtDate(p.paidDate)}</div>
+        </div>
+        <div>Talep No: <strong>${p.requestNo}</strong></div>
+      </div>
+      <div class="box">
+        <div class="row"><span class="label">Tedarikçi Cari Firma:</span> <span>${p.supplier}</span></div>
+        <div class="row"><span class="label">Fatura Numarası:</span> <span>${p.invoiceNo || "—"}</span></div>
+        <div class="row"><span class="label">Ödeme Yöntemi:</span> <span>${p.method}</span></div>
+        <div class="row"><span class="label">Banka / Çek / Hesap Detayı:</span> <span>${p.methodDetails}</span></div>
+      </div>
+      <div class="amount">Ödenen Tutar: ${fmtTL(p.amount)}</div>
+      <div class="sign">
+        <div class="sign-box">Muhasebe Yetkilisi</div>
+        <div class="sign-box">Firma Yetkilisi / Kaşe</div>
+      </div>
+      <script>
+        window.onload = function() { window.print(); }
+      <\/script>
+    </body>
+    </html>
+  `);
+  w.document.close();
 }
 
 /* ============================ SİSTEM & TEMİZLİK ============================ */
@@ -958,6 +1105,30 @@ function renderModal(){
         <div style="margin-bottom:16px;"><span class="field-label">Kullanım Yeri / Proje Alanı <span class="req">*</span></span><input class="input" id="fo-location" placeholder="Örn. A Blok 3. Kat / Villa Şantiye"></div>
         <div style="display:flex;gap:8px;">
           <button type="submit" class="btn btn-primary" style="flex:1;justify-content:center;">Sevk Et & Stoktan Düş</button>
+          <button type="button" class="btn btn-ghost" data-action="close-modal">Vazgeç</button>
+        </div>
+      </form>
+    `;
+  } else if(m.type === "pay-modal"){
+    const p = (state.data.payments||[]).find(x=>x.id === m.id);
+    if(!p) return "";
+    inner = `
+      <h3 class="font-display" style="font-size:16px;font-weight:600;margin-bottom:12px;">💵 Ödeme Yap ve Belge Dök</h3>
+      <div style="margin-bottom:10px;font-size:13px;color:var(--text-mute);">Cari: <strong>${esc(p.supplier)}</strong> | Tutar: <strong class="mono" style="color:var(--amber);">${fmtTL(p.amount)}</strong></div>
+      <form id="pay-form" data-id="${p.id}">
+        <div style="margin-bottom:10px;"><span class="field-label">Ödeme Yöntemi <span class="req">*</span></span>
+          <select class="input" id="pay-method">
+            <option value="Banka Havale/EFT">Banka Havale / EFT</option>
+            <option value="Çek">Çek</option>
+            <option value="Kredi Kartı">Kredi Kartı</option>
+            <option value="Nakit">Nakit</option>
+          </select>
+        </div>
+        <div style="margin-bottom:16px;"><span class="field-label">Hesap No / İBAN veya Çek No & Vade <span class="req">*</span></span>
+          <input class="input" id="pay-details" placeholder="Örn. TR00 0000 ... / Çek No: 123456 Vade: 30 Gün">
+        </div>
+        <div style="display:flex;gap:8px;">
+          <button type="submit" class="btn btn-primary" style="flex:1;justify-content:center;">Ödemeyi Tamamla & PDF Dök</button>
           <button type="button" class="btn btn-ghost" data-action="close-modal">Vazgeç</button>
         </div>
       </form>
@@ -1060,6 +1231,10 @@ document.addEventListener("submit", (e)=>{
   else if(e.target.id === "cari-form"){ e.preventDefault(); handleCariFormSubmit(); }
   else if(e.target.id === "user-form"){ e.preventDefault(); handleUserFormSubmit(); }
   else if(e.target.id === "field-out-form"){ e.preventDefault(); handleFieldOutSubmit(); }
+  else if(e.target.id === "pay-form"){
+    e.preventDefault();
+    handleExecutePayment(e.target.dataset.id);
+  }
 });
 
 document.addEventListener("click", (e)=>{
@@ -1079,6 +1254,8 @@ document.addEventListener("click", (e)=>{
   else if(action === "order-receive"){ handleReceiveOrder(id); }
   else if(action === "order-return"){ handleReturnOrder(id); }
   else if(action === "invoice-process"){ handleProcessInvoice(id); }
+  else if(action === "invoice-reject"){ handleRejectInvoice(id); }
+  else if(action === "pay-modal"){ state.modal = { type:"pay-modal", id }; render(); }
   else if(action === "cari-new"){ state.modal = { type:"cari-form" }; render(); }
   else if(action === "cari-delete"){ handleCariDelete(id); }
   else if(action === "user-new"){ state.modal = { type:"user-form" }; render(); }
